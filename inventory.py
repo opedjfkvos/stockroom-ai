@@ -1,6 +1,7 @@
 """Sample data and the read-only inventory tools available to the assistant."""
 
-from contextlib import closing
+from contextlib import closing, contextmanager
+from contextvars import ContextVar
 from dataclasses import InitVar, asdict, dataclass
 import os
 from pathlib import Path
@@ -30,10 +31,34 @@ ITEMS = (
 BASE_QUERY = "SELECT sku, name, category, stock, minimum, unit_cents, status FROM inventory_status"
 SCHEMA = Path(__file__).resolve().parent / "sql" / "schema.sql"
 DEFAULT_DB = SCHEMA.parent.parent / "data" / "stockroom.sqlite3"
+INVENTORY_SOURCE = ContextVar("inventory_source", default="sample")
+
+
+@contextmanager
+def use_inventory(source):
+    if source not in ("sample", "imported"):
+        raise ValueError("Unknown inventory source.")
+    token = INVENTORY_SOURCE.set(source)
+    try:
+        yield
+    finally:
+        INVENTORY_SOURCE.reset(token)
+
+
+def inventory_path():
+    sample = Path(os.environ.get("STOCKROOM_DB", DEFAULT_DB)).resolve()
+    if INVENTORY_SOURCE.get() == "imported":
+        imported = sample.with_name(f"{sample.stem}-imported.sqlite3")
+        path = Path(os.environ.get("STOCKROOM_IMPORT_DB", imported)).resolve()
+        if path == sample or (sample.exists() and path.exists() and sample.samefile(path)):
+            raise ValueError("Configure separate databases for sample and imported inventory.")
+        return path
+    return sample
+
 
 
 def tokens(text):
-    words = re.findall(r"[a-z0-9]+", text.casefold())
+    words = re.findall(r"[^\W_]+", text.casefold())
     return tuple(
         "mouse" if word == "mice" else
         word[:-3] + "y" if word.endswith("ies") else
@@ -76,7 +101,7 @@ class Plan:
 
 
 @lru_cache(maxsize=4)
-def initialize(path):
+def initialize(path, seed=True):
     path.parent.mkdir(parents=True, exist_ok=True)
     with closing(sqlite3.connect(path)) as db, db:
         db.execute("PRAGMA foreign_keys = ON")
@@ -93,16 +118,17 @@ def initialize(path):
         for statement in SCHEMA.read_text(encoding="utf-8").split(";"):
             if statement.strip():
                 db.execute(statement)
-        db.executemany("INSERT INTO categories(name) VALUES (?)", ((name,) for name in CATEGORIES))
-        db.executemany(
-            """INSERT INTO products(sku, name, category_id, minimum, unit_cents)
-               SELECT ?, ?, id, ?, ? FROM categories WHERE name = ?""",
-            ((sku, name, minimum, price, category) for sku, name, category, _, minimum, price in ITEMS),
-        )
-        db.executemany(
-            "INSERT INTO stock_movements(sku, quantity_delta, reason) VALUES (?, ?, ?)",
-            ((sku, stock, "Opening balance") for sku, _, _, stock, _, _ in ITEMS if stock),
-        )
+        if seed:
+            db.executemany("INSERT INTO categories(name) VALUES (?)", ((name,) for name in CATEGORIES))
+            db.executemany(
+                """INSERT INTO products(sku, name, category_id, minimum, unit_cents)
+                   SELECT ?, ?, id, ?, ? FROM categories WHERE name = ?""",
+                ((sku, name, minimum, price, category) for sku, name, category, _, minimum, price in ITEMS),
+            )
+            db.executemany(
+                "INSERT INTO stock_movements(sku, quantity_delta, reason) VALUES (?, ?, ?)",
+                ((sku, stock, "Opening balance") for sku, _, _, stock, _, _ in ITEMS if stock),
+            )
         migrate_stock_status(db)
 
 
@@ -115,8 +141,8 @@ def migrate_stock_status(db):
 
 
 def connect():
-    path = Path(os.environ.get("STOCKROOM_DB", DEFAULT_DB)).resolve()
-    initialize(path)
+    path = inventory_path()
+    initialize(path, seed=INVENTORY_SOURCE.get() == "sample")
     db = sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True)
     db.row_factory = sqlite3.Row
     db.create_function("name_matches", 2, name_matches, deterministic=True)
@@ -165,7 +191,7 @@ def run_tool(plan):
     return rows
 
 
-def answer_from_rows(plan, rows, *, scope_exists=False):
+def answer_from_rows(plan, rows, *, scope_exists=False, currency="USD"):
     if not rows:
         if scope_exists:
             if plan.tool == "reorder":
@@ -184,7 +210,9 @@ def answer_from_rows(plan, rows, *, scope_exists=False):
     if plan.tool == "valuation":
         cents = sum(row["stock"] * row["unit_cents"] for row in rows)
         scope = "1 product" if len(rows) == 1 else f"{len(rows)} products"
-        return f"Current inventory value is ${cents / 100:,.2f} across {scope}."
+        amount = f"{cents / 100:,.2f}"
+        value = f"${amount}" if currency == "USD" else f"{currency} {amount}"
+        return f"Current inventory value is {value} across {scope}."
     if plan.tool == "compare":
         highest = rows[0]["stock"]
         if highest <= 0:

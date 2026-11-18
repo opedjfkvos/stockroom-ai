@@ -10,14 +10,36 @@
 <body>
   <header class="topbar">
     <div class="identity"><span class="mark" aria-hidden="true">S</span><strong>Stockroom AI</strong></div>
-    <span class="environment">Sample inventory · USD</span>
+    <span class="environment" id="inventory-label">Sample inventory · USD</span>
   </header>
   <main>
     <section class="intro">
       <div><h1>Inventory overview</h1><p>Track stock levels and ask questions about your inventory.</p></div>
-      <div class="source"><span></span> SQLite data source</div>
+      <label class="inventory-source">Inventory
+        <select id="inventory-source">
+          <option value="sample">Sample inventory</option>
+          <option value="imported">Imported inventory</option>
+        </select>
+      </label>
     </section>
     <p id="load-error" class="hidden" role="alert"></p>
+    <details class="panel import-panel">
+      <summary>Import Excel or CSV from 1C</summary>
+      <form id="import-form">
+        <label>Stock export<input id="import-file" type="file" accept=".xlsx,.csv" required></label>
+        <label>Currency
+          <select id="import-currency" required>
+            <option value="">Choose currency</option>
+            <option>PLN</option><option>UAH</option><option>EUR</option><option>USD</option><option>RUB</option>
+          </select>
+        </label>
+        <button type="submit" id="import-preview">Preview</button>
+        <a href="/one-c-stock.csv" download>Download CSV template</a>
+      </form>
+      <div id="import-result" role="status" aria-live="polite"></div>
+      <div id="import-table" class="table-wrap" hidden></div>
+      <button type="button" id="import-confirm" hidden>Confirm import</button>
+    </details>
     <section class="metrics" aria-label="Inventory metrics">
       <article><span>Products</span><strong id="metric-products">—</strong><small>Unique SKUs</small></article>
       <article><span>Units on hand</span><strong id="metric-units">—</strong><small>Across all categories</small></article>

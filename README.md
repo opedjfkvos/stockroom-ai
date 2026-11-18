@@ -27,6 +27,24 @@ Try these examples:
 
 Select **Evidence** after an answer to inspect the tool, scope, source records and unit costs. The dashboard reloads inventory after each successful question. The catalogue can also be filtered by name or SKU, category and stock status.
 
+## Import Excel or a 1C export
+
+Install the optional Excel dependencies before importing an `.xlsx` file:
+
+```sh
+python -m pip install -r requirements.txt
+```
+
+1. Open **Import Excel or CSV from 1C**. Choose an `.xlsx` or `.csv` file and its currency. The [sample 1C-style CSV](examples/one-c-stock.csv) shows the expected format.
+2. Select **Preview** and check the first ten rows and the validation messages. Save formulas as values, store SKUs with leading zeros as text and export one row per SKU.
+3. Select **Confirm import**. The app switches to **Imported inventory**. You can return to **Sample inventory** with the inventory selector.
+
+The file needs **SKU, product name, category, on-hand quantity, minimum quantity and unit cost**. For an export lacking minimums or unit costs, add those columns before importing. Whole-unit quantities are supported. The importer accepts common English, Russian and Ukrainian headers, including `Артикул`, `Номенклатура`, `Остаток` and `Закупочная цена`. It reads the first worksheet in XLSX and accepts UTF-8 or Windows-1251 CSV. Move the header into the first 25 rows and remove totals and subtotals.
+
+Imports update only the listed SKUs, recording the difference as a stock movement. To set an item to zero, include a row with zero stock. A confirmed import is atomic and uses a separate database. The default imported database is `data/stockroom-imported.sqlite3`; set `STOCKROOM_IMPORT_DB` to use another path. The first import fixes the currency for that database. Importing a file does not require Ollama. Ask about imported items in English using their exact catalogue names or SKU, for example `What about SKU 0002?`.
+
+The 1C option reads exported files. Column names can vary by configuration, so compare your first export with the template. Automatic synchronisation and direct database access are outside this import workflow.
+
 ## Run with a local language model
 
 Start Ollama and install the example model.
