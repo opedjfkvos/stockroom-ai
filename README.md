@@ -2,6 +2,8 @@
 
 [![Tests](https://github.com/opedjfkvos/stockroom-ai/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/opedjfkvos/stockroom-ai/actions/workflows/tests.yml)
 
+[Download for Windows](https://github.com/opedjfkvos/stockroom-ai/releases/latest)
+
 Stockroom AI is an AI-assisted portfolio prototype for answering questions about a sample inventory. It includes a browser dashboard, a Python API and a SQLite database. The dashboard opens in Demo mode with no model downloads, API keys, or third-party Python packages.
 
 
@@ -9,8 +11,8 @@ Stockroom AI is an AI-assisted portfolio prototype for answering questions about
 
 ## Windows app
 
-Open the latest green [Windows app workflow](https://github.com/opedjfkvos/stockroom-ai/actions/workflows/windows.yml)
-and download **StockroomAI-Windows** from its Artifacts section. Extract the ZIP and double-click
+Open [GitHub Releases](https://github.com/opedjfkvos/stockroom-ai/releases/latest) and download **StockroomAI-Windows.zip** from **Assets**.
+Extract the ZIP and double-click
 `StockroomAI.exe`. The launcher opens the dashboard in your default browser and runs the local
 server without a console. Keep the launcher open while using the dashboard. Python is included.
 The app stores its SQLite files in `%LOCALAPPDATA%/StockroomAI`.
