@@ -3,7 +3,7 @@
 import json
 import os
 import re
-from urllib.error import URLError
+from http.client import HTTPException
 from urllib.request import Request, urlopen
 
 from inventory import CATEGORIES, ITEMS, TOOLS, Plan, answer_from_rows, name_matches, run_tool, tokens
@@ -18,6 +18,12 @@ UNSUPPORTED_REQUEST = re.compile(
     r"last (?:week|month|year)|next (?:week|month|year)|delete|update|remove|set|change)\b"
     r"|\b(?:add|order|buy|purchase|reorder)\s+\d+\b"
 )
+CATEGORY_ALIASES = {"network": "Networking"}
+PRODUCT_BOUNDARIES = {
+    "a", "an", "any", "are", "about", "do", "for", "from", "have", "in", "is", "left",
+    "need", "needs", "of", "on", "out", "please", "sold", "stock", "the", "which", "worth",
+    "list", "show", "below", "completely", "reorder", "reordering", "replenish", "replenishment",
+}
 PLAN_SCHEMA = {
     "type": "object",
     "properties": {
@@ -55,6 +61,8 @@ class UnsupportedQuestion(ValueError):
 
 def product_filter(question):
     sku_mentions = re.findall(r"\b[a-z]{3}-[0-9]+\b", question)
+    if len(sku_mentions) > 1:
+        raise UnsupportedQuestion("Ask about one product or category at a time.")
     if sku_mentions:
         return sku_mentions[0].upper()
 
@@ -70,6 +78,10 @@ def product_filter(question):
                 continue
             matching = [sku for sku, name in product_names if name_matches(name, keyword)]
             if matching:
+                end = start + width
+                adjacent = words[max(0, start - 1):start] + words[end:end + 1]
+                if any(word not in PRODUCT_BOUNDARIES for word in adjacent):
+                    raise UnsupportedQuestion("Use a product name or SKU from the catalogue.")
                 return matching[0] if len(matching) == 1 else keyword
     return ""
 
@@ -80,10 +92,11 @@ def demo_plan(question):
     if re.search(r"\b(?:and|or)\b", normalized):
         raise UnsupportedQuestion("Ask about one product or category at a time.")
     words = set(tokens(normalized))
-    categories = [name for name in CATEGORIES if set(tokens(name)) <= words]
+    categories = {name for name in CATEGORIES if set(tokens(name)) <= words}
+    categories.update(name for alias, name in CATEGORY_ALIASES.items() if alias in words)
     if len(categories) > 1:
         raise UnsupportedQuestion("Ask about one category at a time.")
-    category = categories[0] if categories else ""
+    category = next(iter(categories), "")
     product = product_filter(normalized)
 
     if re.search(r"\b(out of stock|sold out)\b", normalized):
@@ -140,7 +153,7 @@ def ollama_plan(question, model, endpoint="http://127.0.0.1:11434"):
         if plan == {"tool": "unsupported", "category": "", "product": ""}:
             return None
         return Plan(**plan)
-    except (URLError, TimeoutError, ValueError, TypeError, KeyError) as exc:
+    except (OSError, HTTPException, ValueError, TypeError, KeyError) as exc:
         raise ModelUnavailable(
             "The local model did not return a valid plan. Check Ollama and the installed model, or switch to Demo."
         ) from exc
@@ -164,8 +177,12 @@ def query_inventory(question, mode="demo"):
     model = os.environ.get("STOCKROOM_MODEL", DEFAULT_MODEL)
     plan = plan_question(question, mode, model)
     rows = run_tool(plan)
+    scope_exists = (
+        not rows and plan.product and plan.tool in {"reorder", "out_of_stock"}
+        and bool(run_tool(Plan("lookup", category=plan.category, product=plan.product)))
+    )
     return {
-        "answer": answer_from_rows(plan, rows),
+        "answer": answer_from_rows(plan, rows, scope_exists=scope_exists),
         "plan": plan.to_dict(),
         "rows": rows,
         "mode": mode,

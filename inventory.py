@@ -143,13 +143,14 @@ def run_tool(plan):
     return rows
 
 
-def answer_from_rows(plan, rows):
+def answer_from_rows(plan, rows, *, scope_exists=False):
     if not rows:
-        return (
-            "No products below their reorder point in this scope."
-            if plan.tool == "reorder" and not plan.product
-            else "No inventory records match that request."
-        )
+        if scope_exists or not plan.product:
+            if plan.tool == "reorder":
+                return "No products below their reorder point in this scope."
+            if plan.tool == "out_of_stock":
+                return "No products are out of stock in this scope."
+        return "No inventory records match that request."
     if plan.tool == "out_of_stock":
         return "1 product is out of stock." if len(rows) == 1 else f"{len(rows)} products are out of stock."
     if plan.tool == "reorder":
