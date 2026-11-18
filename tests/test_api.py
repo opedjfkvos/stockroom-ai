@@ -64,7 +64,7 @@ class ApiTest(unittest.TestCase):
         with closing(connect()) as db:
             row = db.execute("SELECT stock, status FROM inventory_status WHERE sku = ?", ("DSP-301",)).fetchone()
             self.assertEqual(tuple(row), (5, "Healthy"))
-            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 1)
+            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 2)
             with self.assertRaisesRegex(sqlite3.OperationalError, "readonly"):
                 db.execute("DELETE FROM stock_movements")
         self.assertEqual(snapshot()["metrics"]["units"], 183)

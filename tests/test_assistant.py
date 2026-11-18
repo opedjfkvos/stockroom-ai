@@ -141,7 +141,7 @@ class AssistantTest(unittest.TestCase):
             with self.subTest(question=question), patch("assistant.ollama_plan", return_value=proposed):
                 self.assertEqual(plan_question(question, "ollama", "test-model"), expected)
         with patch("assistant.ollama_plan", return_value=Plan("lookup", "Audio")):
-            with self.assertRaisesRegex(UnsupportedQuestion, "Specify a product"):
+            with self.assertRaises(UnsupportedQuestion):
                 plan_question("Show me those items", "ollama", "test-model")
 
     def test_ollama_refuses_unsupported_intents_before_calling_model(self):

@@ -68,6 +68,7 @@ def main():
     modes.add_argument("--app", action="store_true", help="Evaluate Ollama with the app's scope checks.")
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--holdout", action="store_true", help="Use the separate paraphrase and scope suite.")
+    parser.add_argument("--strict", action="store_true", help="Fail for any mismatch, including on the diagnostic set.")
     args = parser.parse_args()
     cases = HOLDOUT_CASES if args.holdout else SMOKE_CASES
     correct = 0
@@ -105,7 +106,7 @@ def main():
     print(f"Filter accuracy on supported questions: {filter_hits}/{supported}")
     print(f"Correct refusals: {refusal_hits}/{unsupported}")
     print(f"Incorrect refusals on supported questions: {refused_supported}/{supported}")
-    return int(not args.holdout and correct != len(cases))
+    return int((args.strict or not args.holdout) and correct != len(cases))
 
 
 if __name__ == "__main__":
