@@ -5,41 +5,6 @@ on:
 permissions:
   contents: read
 jobs:
-  screenshot:
-    runs-on: ubuntu-latest
-    timeout-minutes: 8
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - run: |
-          pip install playwright
-          python -m playwright install --with-deps chromium
-      - name: Capture the running dashboard
-        run: |
-          python - <<'PY'
-          import subprocess
-          from playwright.sync_api import sync_playwright, expect
-          with subprocess.Popen(["python", "app.py", "--port", "0"], stdout=subprocess.PIPE, text=True) as server:
-              try:
-                  address = server.stdout.readline().split()[-1]
-                  with sync_playwright() as playwright:
-                      browser = playwright.chromium.launch()
-                      page = browser.new_page(viewport={"width": 1280, "height": 960})
-                      page.goto(address)
-                      page.get_by_role("button", name="What needs reordering?").click()
-                      page.locator("#ask").click()
-                      expect(page.locator("#result")).to_contain_text("Add 20 units")
-                      page.get_by_text("Evidence · 5 records").click()
-                      page.screenshot(path="dashboard.png", animations="disabled")
-              finally:
-                  server.terminate()
-          PY
-      - uses: actions/upload-artifact@v4
-        with:
-          name: stockroom-dashboard
-          path: dashboard.png
   ollama:
     runs-on: ubuntu-latest
     timeout-minutes: 12
@@ -50,10 +15,13 @@ jobs:
           python-version: '3.12'
       - name: Start Ollama and fetch Qwen
         run: |
-          docker run -d --name ollama -p 127.0.0.1:11434:11434 ollama/ollama
-          curl --fail --retry 12 --retry-connrefused --retry-delay 2 http://127.0.0.1:11434/api/tags
+          docker run -d --name ollama -e OLLAMA_HOST=0.0.0.0:11434 -p 127.0.0.1:11434:11434 ollama/ollama
+          curl --fail --retry 25 --retry-all-errors --retry-delay 2 http://127.0.0.1:11434/api/tags
           docker exec ollama ollama pull qwen2.5:1.5b
           docker exec ollama ollama run qwen2.5:1.5b "Say ready."
           docker exec ollama ollama list
       - name: Score the diagnostic suite
         run: python model_eval.py --model qwen2.5:1.5b --holdout
+      - name: Show Ollama startup logs if the job fails
+        if: failure()
+        run: docker logs ollama
