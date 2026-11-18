@@ -9,6 +9,8 @@ import re
 import sqlite3
 from functools import lru_cache
 
+from localized_stock import stock_text
+
 CATEGORIES = ("Accessories", "Audio", "Displays", "Networking", "Peripherals", "Storage")
 TOOLS = ("lookup", "reorder", "out_of_stock", "compare", "valuation")
 ITEMS = (
@@ -211,44 +213,48 @@ def run_tool(plan):
     return rows
 
 
-def answer_from_rows(plan, rows, *, scope_exists=False, currency="USD"):
+def answer_from_rows(plan, rows, *, scope_exists=False, currency="USD", language="en"):
+    def say(key, english, **values):
+        return stock_text(language, key, english, **values)
+
     if not rows:
         if scope_exists:
             if plan.tool == "reorder":
-                return "No products below their reorder point in this scope."
+                return say("no_reorder", "No products below their reorder point in this scope.")
             if plan.tool == "out_of_stock":
-                return "No products are out of stock in this scope."
-        return "No inventory records match that request."
+                return say("no_out", "No products are out of stock in this scope.")
+        return say("missing", "No inventory records match that request.")
     if plan.tool == "out_of_stock":
-        return "1 product is out of stock." if len(rows) == 1 else f"{len(rows)} products are out of stock."
+        english = "1 product is out of stock." if len(rows) == 1 else f"{len(rows)} products are out of stock."
+        return say("out", english, n=len(rows))
     if plan.tool == "reorder":
         shortage = sum(row["minimum"] - row["stock"] for row in rows)
         if len(rows) == 1:
             units = "unit" if shortage == 1 else "units"
-            return f"1 product needs replenishment. Add {shortage} {units} to reach its reorder point."
-        return f"{len(rows)} products need replenishment. Add {shortage} units to reach their reorder points."
+            return say("reorder", f"1 product needs replenishment. Add {shortage} {units} to reach its reorder point.", n=1, units=shortage)
+        return say("reorder", "{n} products need replenishment. Add {units} units to reach their reorder points.", n=len(rows), units=shortage)
     if plan.tool == "valuation":
         cents = sum(max(row["stock"], 0) * row["unit_cents"] for row in rows)
         scope = "1 product" if len(rows) == 1 else f"{len(rows)} products"
         amount = f"{cents / 100:,.2f}"
         value = f"${amount}" if currency == "USD" else f"{currency} {amount}"
-        note = " Negative balances were valued at zero. Check the source records." if any(
+        note = say("negative", " Negative balances were valued at zero. Check the source records.") if any(
             row["stock"] < 0 for row in rows
         ) else ""
-        return f"Current inventory value is {value} across {scope}.{note}"
+        return say("value", f"Current inventory value is {value} across {scope}.", value=value, n=len(rows)) + note
     if plan.tool == "compare":
         highest = rows[0]["stock"]
         if highest <= 0:
-            return "All matching products are currently out of stock."
+            return say("all_out", "All matching products are currently out of stock.")
         leaders = [row["name"] for row in rows if row["stock"] == highest]
         if len(leaders) > 1:
-            return f"{', '.join(leaders)} are tied for the most stock, with {highest} units each."
-        return f"{leaders[0]} has the most stock in this result, with {highest} units."
+            return say("tie", "{names} are tied for the most stock, with {units} units each.", names=", ".join(leaders), units=highest)
+        return say("leader", "{names} has the most stock in this result, with {units} units.", names=leaders[0], units=highest)
     if len(rows) == 1:
         row = rows[0]
-        return f"{row['name']} has {row['stock']} units in stock. Reorder point: {row['minimum']}."
+        return say("single", "{name} has {stock} units in stock. Reorder point: {minimum}.", **row)
     units = sum(row["stock"] for row in rows)
-    answer = f"Found {len(rows)} matching products with {units} units in stock."
+    answer = say("many", "Found {n} matching products with {units} units in stock.", n=len(rows), units=units)
     if plan.product:
-        answer += " Use a product name or SKU to narrow the search."
+        answer += say("narrow", " Use a product name or SKU to narrow the search.")
     return answer

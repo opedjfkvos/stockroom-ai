@@ -7,18 +7,35 @@ import json
 from pathlib import Path
 import sqlite3
 import sys
+from tempfile import NamedTemporaryFile
 from urllib.parse import parse_qs, urlsplit
 
 from assistant import EXAMPLES, ModelUnavailable, query_inventory
 from inventory import snapshot, use_inventory
 from inventory_import import MAX_BYTES, import_inventory, latest_import
 
+LANGUAGE_FILE = None
 STATIC = Path(__file__).resolve().parent / "static"
 ASSETS = {
     "/": ("index.html", "text/html; charset=utf-8"),
     "/styles.css": ("styles.css", "text/css; charset=utf-8"),
     "/app.js": ("app.js", "text/javascript; charset=utf-8"),
+    "/i18n.js": ("i18n.js", "text/javascript; charset=utf-8"),
 }
+
+
+def save_language(language):
+    if language not in ("en", "ru", "uk"):
+        raise ValueError("Unsupported language.")
+    if LANGUAGE_FILE is not None:
+        LANGUAGE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with NamedTemporaryFile(dir=LANGUAGE_FILE.parent, delete=False) as temp:
+            temp.write(language.encode("ascii"))
+        temporary_path = Path(temp.name)
+        try:
+            temporary_path.replace(LANGUAGE_FILE)
+        finally:
+            temporary_path.unlink(missing_ok=True)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -79,7 +96,7 @@ class Handler(BaseHTTPRequestHandler):
         if not self.local_host():
             return
         route = urlsplit(self.path)
-        if route.path not in ("/api/ask", "/api/import/preview", "/api/import/confirm"):
+        if route.path not in ("/api/ask", "/api/import/preview", "/api/import/confirm", "/api/preferences"):
             self.json_response(HTTPStatus.NOT_FOUND, {"error": "Endpoint not found."})
             return
         try:
@@ -93,7 +110,19 @@ class Handler(BaseHTTPRequestHandler):
                     if not currency:
                         raise ValueError("Import a spreadsheet before asking about imported inventory.")
                     result = query_inventory(payload.get("question"), payload.get("mode", "demo"),
-                                             currency=currency)
+                                             currency=currency, language=payload.get("language", "en"))
+            elif route.path == "/api/preferences":
+                if self.headers.get("X-Stockroom-Preference") != "1":
+                    raise ValueError("Use the language selector.")
+                payload = json.loads(self.read_body(256, "application/json"))
+                if not isinstance(payload, dict):
+                    raise ValueError("Send a JSON object.")
+                try:
+                    save_language(payload.get("language"))
+                except OSError:
+                    self.json_response(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "Could not save the language."})
+                    return
+                result = {"language": payload["language"]}
             else:
                 result = self.handle_import(route)
         except ValueError as exc:

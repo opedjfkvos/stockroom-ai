@@ -5,83 +5,94 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Stockroom AI</title>
   <link rel="stylesheet" href="/styles.css">
+  <script src="/i18n.js" defer></script>
   <script src="/app.js" defer></script>
 </head>
 <body>
   <header class="topbar">
     <div class="identity"><span class="mark" aria-hidden="true">S</span><strong>Stockroom AI</strong></div>
-    <span class="environment" id="inventory-label">Sample inventory · USD</span>
+    <div class="topbar-controls">
+      <span class="environment" id="inventory-label">Sample inventory · USD</span>
+      <label class="language-picker">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+          <circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/>
+          <path d="M3 12h18"/>
+        </svg>
+        <span class="sr-only" data-i18n>Language</span>
+        <select id="language"><option value="en">English</option><option value="ru">Русский</option><option value="uk">Українська</option></select>
+      </label>
+    </div>
   </header>
   <main>
     <section class="intro">
-      <div><h1>Inventory overview</h1><p>Track stock levels and ask questions about your inventory.</p></div>
-      <label class="inventory-source">Inventory
+      <div><h1 data-i18n>Inventory overview</h1><p data-i18n>Track stock levels and ask questions about your inventory.</p></div>
+      <label class="inventory-source"><span data-i18n>Inventory</span>
         <select id="inventory-source">
-          <option value="sample">Sample inventory</option>
-          <option value="imported">Imported inventory</option>
+          <option value="sample" data-i18n>Sample inventory</option>
+          <option value="imported" data-i18n>Imported inventory</option>
         </select>
       </label>
     </section>
     <p id="load-error" class="hidden notice" role="alert"></p>
     <p id="balance-warning" class="hidden notice" role="status"></p>
     <details class="panel import-panel">
-      <summary>Import Excel or CSV from 1C</summary>
+      <summary data-i18n>Import Excel or CSV from 1C</summary>
       <form id="import-form">
-        <label>Stock export<input id="import-file" type="file" accept=".xlsx,.csv" required></label>
-        <label>Currency
+        <label><span data-i18n>Stock export</span><input id="import-file" type="file" accept=".xlsx,.csv" required></label>
+        <label><span data-i18n>Currency</span>
           <select id="import-currency" required>
-            <option value="">Choose currency</option>
+            <option value="" data-i18n>Choose currency</option>
             <option>PLN</option><option>UAH</option><option>EUR</option><option>USD</option><option>RUB</option>
           </select>
         </label>
-        <button type="submit" id="import-preview">Preview</button>
-        <a href="/one-c-stock.csv" download>Download CSV template</a>
+        <button type="submit" id="import-preview" data-i18n>Preview</button>
+        <a href="/one-c-stock.csv" download data-i18n>Download CSV template</a>
       </form>
       <div id="import-result" role="status" aria-live="polite"></div>
       <div id="import-table" class="table-wrap" hidden></div>
-      <button type="button" id="import-confirm" hidden>Confirm import</button>
+      <button type="button" id="import-confirm" hidden data-i18n>Confirm import</button>
     </details>
     <section class="metrics" aria-label="Inventory metrics">
-      <article><span>Products</span><strong id="metric-products">—</strong><small>Unique SKUs</small></article>
-      <article><span>Units on hand</span><strong id="metric-units">—</strong><small>Across all categories</small></article>
-      <article class="reorder"><span>Needs reorder</span><strong id="metric-reorder">—</strong><small>Below minimum stock</small></article>
-      <article><span>Inventory value</span><strong id="metric-value">—</strong><small>At unit cost</small></article>
+      <article><span data-i18n>Products</span><strong id="metric-products">—</strong><small data-i18n>Unique SKUs</small></article>
+      <article><span data-i18n>Units on hand</span><strong id="metric-units">—</strong><small data-i18n>Across all categories</small></article>
+      <article class="reorder"><span data-i18n>Needs reorder</span><strong id="metric-reorder">—</strong><small data-i18n>Below minimum stock</small></article>
+      <article><span data-i18n>Inventory value</span><strong id="metric-value">—</strong><small data-i18n>At unit cost</small></article>
     </section>
     <div class="workspace">
       <section class="panel assistant" aria-labelledby="assistant-title">
         <div class="section-head">
-          <div><h2 id="assistant-title">Inventory assistant</h2><p id="mode-help">Stock lookup works without a model.</p></div>
-          <label><span class="sr-only">Assistant mode</span>
-            <select id="mode"><option value="demo">Stock search</option><option value="ollama">Local LLM</option></select>
+          <div><h2 id="assistant-title" data-i18n>Inventory assistant</h2><p id="mode-help" data-i18n>Stock lookup works without a model.</p></div>
+          <label><span class="sr-only" data-i18n>Assistant mode</span>
+            <select id="mode"><option value="demo" data-i18n>Stock search</option><option value="ollama" data-i18n>Local LLM</option></select>
           </label>
         </div>
         <div class="examples" id="examples" aria-label="Example questions"></div>
         <form id="ask-form">
           <label class="sr-only" for="question">Inventory question</label>
-          <input id="question" placeholder="Ask in English or choose a SKU below…" maxlength="280" required>
-          <button type="submit" id="ask">Ask</button>
+          <input id="question" placeholder="Ask about stock or click a SKU below…" maxlength="280" required>
+          <button type="submit" id="ask" data-i18n>Ask</button>
         </form>
         <div id="result" role="status" aria-live="polite" class="result">
-          <p>Ask a question to see the answer and the records behind it.</p>
+          <p data-i18n>Ask a question to see the answer and the records behind it.</p>
         </div>
       </section>
       <section class="panel chart" aria-labelledby="chart-title">
-        <div class="section-head"><div><h2 id="chart-title">Stock by category</h2><p>Units on hand</p></div></div>
+        <div class="section-head"><div><h2 id="chart-title" data-i18n>Stock by category</h2><p data-i18n>Units on hand</p></div></div>
         <div id="bars" class="bars"></div>
       </section>
     </div>
     <section class="panel catalog" aria-labelledby="catalog-title">
       <div class="section-head">
-        <div><h2 id="catalog-title">Product inventory</h2><p id="record-count" role="status"></p></div>
+        <div><h2 id="catalog-title" data-i18n>Product inventory</h2><p id="record-count" role="status"></p></div>
         <div class="filters">
-          <label><span class="sr-only">Search product name or SKU</span><input id="filter" type="search" placeholder="Search name or SKU"></label>
-          <label><span class="sr-only">Filter by category</span><select id="category"><option value="">All categories</option></select></label>
-          <label><span class="sr-only">Filter by availability</span><select id="stock"><option value="">Any stock level</option><option>Healthy</option><option>Low stock</option><option>Out of stock</option></select></label>
+          <label><span class="sr-only" data-i18n>Search product name or SKU</span><input id="filter" type="search" placeholder="Search name or SKU"></label>
+          <label><span class="sr-only" data-i18n>Filter by category</span><select id="category"><option value="" data-i18n>All categories</option></select></label>
+          <label><span class="sr-only" data-i18n>Filter by availability</span><select id="stock"><option value="" data-i18n>Any stock level</option><option value="Healthy" data-i18n>Healthy</option><option value="Low stock" data-i18n>Low stock</option><option value="Out of stock" data-i18n>Out of stock</option></select></label>
         </div>
       </div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th scope="col">Product</th><th scope="col">Category</th><th scope="col">On hand</th><th scope="col">Reorder point</th><th scope="col">Unit cost</th><th scope="col">Status</th></tr></thead>
+          <thead><tr><th scope="col" data-i18n>Product</th><th scope="col" data-i18n>Category</th><th scope="col" data-i18n>On hand</th><th scope="col" data-i18n>Reorder point</th><th scope="col" data-i18n>Unit cost</th><th scope="col" data-i18n>Status</th></tr></thead>
           <tbody id="table-body"></tbody>
         </table>
       </div>

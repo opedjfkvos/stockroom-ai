@@ -95,6 +95,26 @@ class AssistantTest(unittest.TestCase):
             "Current inventory value is $792.00 across 1 product.",
         )
 
+    def test_russian_and_ukrainian_queries_are_grounded_and_localized(self):
+        for mode in ("demo", "ollama"):
+            with patch("assistant.ollama_plan", return_value=Plan("compare")):
+                for lang, question, expected_tool, expected, sku in (
+                    ("ru", "Сколько товара по артикулу DSP-301?", "lookup", "в наличии 0 шт.", "DSP-301"),
+                    ("uk", "Скільки товару за артикулом PER-501?", "lookup", "у наявності 16 шт.", "PER-501"),
+                    ("ru", "Что нужно докупить?", "reorder", "докупить 20 шт.", None),
+                    ("uk", "Які товари закінчилися?", "out_of_stock", "Позицій без залишку: 2.", None),
+                    ("uk", "Скільки коштують усі товари?", "valuation", "$7,372.90", None),
+                    ("ru", "Сколько всего единиц на складе?", "lookup", "178 шт.", None),
+                ):
+                    with self.subTest(question=question, mode=mode, lang=lang):
+                        result = query_inventory(question, mode, language=lang)
+                        self.assertEqual(result["plan"]["tool"], expected_tool)
+                        self.assertIn(expected, result["answer"])
+                        if sku:
+                            self.assertEqual([row["sku"] for row in result["rows"]], [sku])
+                with self.assertRaises(UnsupportedQuestion):
+                    query_inventory("Скільки товару за артикулом PER-501 у євро?", mode, language="uk")
+
     def test_invalid_inputs(self):
         for question, mode in [("", "demo"), ("a" * 281, "demo"), ("Hello", "other"), (42, "demo")]:
             with self.subTest(question=question, mode=mode):

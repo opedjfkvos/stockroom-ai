@@ -2,8 +2,6 @@
 
 [![Tests](https://github.com/opedjfkvos/stockroom-ai/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/opedjfkvos/stockroom-ai/actions/workflows/tests.yml)
 
-[Download for Windows](https://github.com/opedjfkvos/stockroom-ai/releases/latest)
-
 Stockroom AI is an AI-assisted portfolio prototype for answering questions about a sample inventory. It includes a browser dashboard, a Python API and a SQLite database. The dashboard opens in Demo mode with no model downloads, API keys, or third-party Python packages.
 
 
@@ -11,15 +9,20 @@ Stockroom AI is an AI-assisted portfolio prototype for answering questions about
 
 ## Windows app
 
-Open [GitHub Releases](https://github.com/opedjfkvos/stockroom-ai/releases/latest) and download **StockroomAI-Windows.zip** from **Assets**.
-Extract the ZIP and double-click
+Open the latest green [Windows app workflow](https://github.com/opedjfkvos/stockroom-ai/actions/workflows/windows.yml)
+and download **StockroomAI-Windows** from its Artifacts section. Extract the ZIP and double-click
 `StockroomAI.exe`. The launcher opens the dashboard in your default browser and runs the local
 server without a console. Keep the launcher open while using the dashboard. Python is included.
 The app stores its SQLite files in `%LOCALAPPDATA%/StockroomAI`.
 
-Use **Import Excel or CSV from 1C** to choose a file. Stock search works immediately. The
-**Start local AI** button starts an existing Ollama installation if needed. Install and download
-the chosen model separately before using **Local LLM**. The build is unsigned.
+Use **Import Excel or CSV from 1C** to choose a file. Stock search works immediately.
+Choose English, Русский, or Українська with the globe menu. The assistant supports stock questions
+in those languages. For a specific product, use its catalogue name or click its SKU.
+
+Click **Start local AI** for guided setup. If Ollama is missing, the launcher offers to open the
+official Windows installer page. After installing it, click **Start local AI** again, then confirm
+the model download. The default model needs about 1 GB of download data. When setup finishes,
+the launcher opens the dashboard with **Local LLM** selected. The Windows build is unsigned.
 
 ## Run locally
 
@@ -114,7 +117,7 @@ The [live-catalogue run](https://github.com/opedjfkvos/stockroom-ai/actions/runs
 4. SQLite runs the selected query with bound parameters. The connection is read-only after the initial seed.
 5. Python calculates or summarizes the result using the returned records. The model does not generate SQL or inventory quantities.
 
-The API exposes `GET /api/inventory` for the catalogue and dashboard metrics. It exposes `POST /api/ask` with JSON fields `question` and `mode` (`demo` or `ollama`) for the assistant. The server binds to localhost. Both modes read product names and categories from the current SQLite database and ask for clarification when the subject cannot be matched. Supported scope wording is limited to English.
+The API exposes `GET /api/inventory` for the catalogue and dashboard metrics. It exposes `POST /api/ask` with JSON fields `question` and `mode` (`demo` or `ollama`) for the assistant. The server binds to localhost. Both modes read product names and categories from the current SQLite database and ask for clarification when the subject cannot be matched. Use the examples in the chosen language to see supported question formats.
 
 ## SQLite schema
 

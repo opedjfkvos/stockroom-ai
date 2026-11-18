@@ -6,6 +6,8 @@ import re
 from http.client import HTTPException
 from urllib.request import Request, urlopen
 
+from localized_stock import canonical_question
+
 from inventory import TOOLS, Plan, answer_from_rows, catalog_scope, name_matches, product_matches, run_tool, tokens
 
 DEFAULT_MODEL = "qwen2.5:1.5b"
@@ -60,8 +62,8 @@ PLAN_SCHEMA = {
 }
 EXAMPLES = (
     "What needs reordering?",
-    "Do we have any webcams?",
-    "Which accessories have the most stock?",
+    "Which products are out of stock?",
+    "How many units are on hand across the whole warehouse?",
     "What is our current inventory value?",
 )
 PROMPT = """You route read-only questions about today's warehouse inventory.
@@ -232,17 +234,19 @@ def plan_question(question, mode, model):
     if mode not in ("demo", "ollama"):
         raise ValueError("Unknown assistant mode.")
     question = question.strip()
-    if UNSUPPORTED_REQUEST.search(question.casefold()):
+    canonical = canonical_question(question)
+    localized = canonical != question
+    if UNSUPPORTED_REQUEST.search(canonical.casefold()):
         raise UnsupportedQuestion(OUT_OF_SCOPE)
-    normalized = question.casefold()
+    normalized = canonical.casefold()
     proposed = None
     if mode == "ollama":
         proposed = ollama_plan(question, model)
-        if proposed is None:
+        if proposed is None and not localized:
             raise UnsupportedQuestion(OUT_OF_SCOPE)
     products, categories = catalog_scope()
     category, product = question_scope(normalized, products, categories)
-    if mode == "demo":
+    if mode == "demo" or localized:
         return demo_plan(normalized, category, product, categories)
 
     if not (category or product) and (proposed.category or proposed.product):
@@ -268,7 +272,9 @@ def plan_question(question, mode, model):
         ) from exc
 
 
-def query_inventory(question, mode="demo", *, currency="USD"):
+def query_inventory(question, mode="demo", *, currency="USD", language="en"):
+    if language not in ("en", "ru", "uk"):
+        raise ValueError("Unsupported language.")
     model = os.environ.get("STOCKROOM_MODEL", DEFAULT_MODEL)
     plan = plan_question(question, mode, model)
     if plan.category and plan.product and not run_tool(
@@ -281,7 +287,7 @@ def query_inventory(question, mode="demo", *, currency="USD"):
         and bool(run_tool(Plan("lookup", category=plan.category, product=plan.product, allowed_categories=None)))
     )
     return {
-        "answer": answer_from_rows(plan, rows, scope_exists=scope_exists, currency=currency),
+        "answer": answer_from_rows(plan, rows, scope_exists=scope_exists, currency=currency, language=language),
         "plan": plan.to_dict(),
         "rows": rows,
         "mode": mode,
