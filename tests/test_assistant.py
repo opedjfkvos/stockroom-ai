@@ -8,7 +8,7 @@ from threading import Thread
 import unittest
 from unittest.mock import patch
 
-from assistant import ModelUnavailable, UnsupportedQuestion, ollama_plan, query_inventory
+from assistant import ModelUnavailable, UnsupportedQuestion, ollama_plan, plan_question, query_inventory
 from inventory import Plan, run_tool, snapshot
 
 
@@ -130,6 +130,27 @@ class AssistantTest(unittest.TestCase):
     def test_lookup_handles_punctuation_as_data(self):
         self.assertEqual(run_tool(Plan("lookup", product="USB'")), [])
         self.assertEqual(snapshot()["metrics"]["products"], 14)
+
+    def test_ollama_filters_are_grounded_in_the_question(self):
+        for question, proposed, expected in (
+            ("What is the entire stock worth?", Plan("valuation", "Audio"), Plan("valuation")),
+            ("List what we have in Displays", Plan("lookup", "Audio"), Plan("lookup", "Displays")),
+            ("How many webcams are on hand?", Plan("lookup", "Audio", "mouse"),
+             Plan("lookup", product="PER-503")),
+        ):
+            with self.subTest(question=question), patch("assistant.ollama_plan", return_value=proposed):
+                self.assertEqual(plan_question(question, "ollama", "test-model"), expected)
+        with patch("assistant.ollama_plan", return_value=Plan("lookup", "Audio")):
+            with self.assertRaisesRegex(UnsupportedQuestion, "Specify a product"):
+                plan_question("Show me those items", "ollama", "test-model")
+
+    def test_ollama_refuses_unsupported_intents_before_calling_model(self):
+        with patch("assistant.ollama_plan") as model:
+            for question in ("What is shipping for the router?", "Which product is cheapest?",
+                             "Will we run out of webcams by Tuesday?"):
+                with self.subTest(question=question), self.assertRaises(UnsupportedQuestion):
+                    plan_question(question, "ollama", "test-model")
+            model.assert_not_called()
 
     def test_structured_model_provider(self):
         with model_stub({"tool": "lookup", "category": "", "product": "PER-503"}) as (endpoint, received):

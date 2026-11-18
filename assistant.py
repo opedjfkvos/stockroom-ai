@@ -15,13 +15,15 @@ OUT_OF_SCOPE = (
 )
 UNSUPPORTED_REQUEST = re.compile(
     r"\b(forecast|predict|weather|translate|sales|revenue|historical|yesterday|tomorrow|"
-    r"last (?:week|month|year)|next (?:week|month|year)|delete|update|remove|set|change)\b"
+    r"last (?:week|month|year)|next (?:week|month|year)|delete|update|remove|set|change|"
+    r"shipping|delivery fee|most expensive|cheapest)\b"
+    r"|\bwill (?:we|it|the) .+\b(?:run out|sell out)\b"
     r"|\b(?:add|order|buy|purchase|reorder)\s+\d+\b"
 )
 CATEGORY_ALIASES = {"network": "Networking"}
 PRODUCT_BOUNDARIES = {
     "a", "an", "any", "are", "about", "do", "for", "from", "have", "in", "is", "left",
-    "need", "needs", "of", "on", "out", "please", "sold", "stock", "the", "which", "worth",
+    "many", "need", "needs", "of", "on", "out", "please", "sold", "stock", "the", "which", "worth",
     "list", "show", "below", "completely", "reorder", "reordering", "replenish", "replenishment",
 }
 PLAN_SCHEMA = {
@@ -40,15 +42,30 @@ EXAMPLES = (
     "Which accessories have the most stock?",
     "What is our current inventory value?",
 )
-PROMPT = (
-    "Plan exactly one read-only inventory tool call using the supplied JSON schema. "
-    "Tools: lookup for item or category stock, reorder for stock below minimum, "
-    "out_of_stock for zero units, compare for highest stock, valuation for total value. Use an empty string for "
-    "unspecified filters. Product is a product name keyword or SKU, only if asked. "
-    "Use unsupported with empty filters for unrelated questions, write requests, historical "
-    "or future data, or any calculation the listed tools cannot answer. "
-    "Respond with the plan only, never with prose, SQL, or invented quantities."
-)
+PROMPT = """You route read-only questions about today's warehouse inventory.
+Return one JSON object with keys tool, category, product.
+
+Choose the tool that answers exactly what was asked:
+- lookup: whether a product is available, or how many units are on hand.
+- reorder: which stock levels are below their reorder point.
+- out_of_stock: which products have exactly zero units.
+- compare: which product has the highest number of units in stock.
+- valuation: total value of the stock on hand at unit cost.
+- unsupported: anything else, including stock forecasts, past inventory, delivery,
+  prices charged to customers, ranking by unit price, and changes to inventory.
+
+A category must be explicitly named. Do not infer a category from a product.
+Copy the requested product keyword or SKU. For the whole warehouse, set both
+filters to "". For unsupported, also set both filters to "".
+
+"Which lines need replenishment now?" -> {"tool":"reorder","category":"","product":""}
+"How much is the entire stock worth?" -> {"tool":"valuation","category":"","product":""}
+"Is the laptop stand available?" -> {"tool":"lookup","category":"","product":"laptop stand"}
+"Will the laptop stand sell out in two days?" -> {"tool":"unsupported","category":"","product":""}
+"Mark the laptop stand unavailable." -> {"tool":"unsupported","category":"","product":""}
+
+Return only the JSON object. Do not calculate amounts or write SQL."""
+
 
 
 class ModelUnavailable(Exception):
@@ -86,9 +103,7 @@ def product_filter(question):
     return ""
 
 
-def demo_plan(question):
-    """Deterministic keyword routing so reviewers can try the app without a model."""
-    normalized = question.casefold()
+def question_scope(normalized):
     if re.search(r"\b(?:and|or)\b", normalized):
         raise UnsupportedQuestion("Ask about one product or category at a time.")
     words = set(tokens(normalized))
@@ -97,8 +112,13 @@ def demo_plan(question):
     if len(categories) > 1:
         raise UnsupportedQuestion("Ask about one category at a time.")
     category = next(iter(categories), "")
-    product = product_filter(normalized)
+    return category, product_filter(normalized)
 
+
+def demo_plan(question):
+    """Deterministic keyword routing so reviewers can try the app without a model."""
+    normalized = question.casefold()
+    category, product = question_scope(normalized)
     if re.search(r"\b(out of stock|sold out)\b", normalized):
         tool = "out_of_stock"
     elif re.search(r"\b(reorder(?:ing)?|replenish(?:ment)?|low stock|below (?:the )?(?:minimum|reorder point))\b", normalized):
@@ -150,7 +170,7 @@ def ollama_plan(question, model, endpoint="http://127.0.0.1:11434"):
         plan = json.loads(json.loads(reply)["message"]["content"])
         if not isinstance(plan, dict) or set(plan) != set(PLAN_SCHEMA["required"]):
             raise ValueError("Invalid plan shape.")
-        if plan == {"tool": "unsupported", "category": "", "product": ""}:
+        if plan["tool"] == "unsupported":
             return None
         return Plan(**plan)
     except (OSError, HTTPException, ValueError, TypeError, KeyError) as exc:
@@ -167,10 +187,18 @@ def plan_question(question, mode, model):
     question = question.strip()
     if UNSUPPORTED_REQUEST.search(question.casefold()):
         raise UnsupportedQuestion(OUT_OF_SCOPE)
-    plan = demo_plan(question) if mode == "demo" else ollama_plan(question, model)
+    if mode == "demo":
+        return demo_plan(question)
+    normalized = question.casefold()
+    category, product = question_scope(normalized)
+    plan = ollama_plan(question, model)
     if plan is None:
         raise UnsupportedQuestion(OUT_OF_SCOPE)
-    return plan
+    if not (category or product) and (plan.category or plan.product):
+        whole_catalogue = re.search(r"\b(?:all|everything|entire|whole|total)\b", normalized)
+        if not whole_catalogue:
+            raise UnsupportedQuestion("Specify a product, category, or the entire inventory.")
+    return Plan(plan.tool, category, product)
 
 
 def query_inventory(question, mode="demo"):

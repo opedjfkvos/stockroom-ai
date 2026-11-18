@@ -47,15 +47,18 @@ The small 18-question smoke suite checks the documented Demo behavior in CI. The
 ```sh
 python model_eval.py --demo --holdout
 python model_eval.py --model qwen2.5:1.5b --holdout
+python model_eval.py --model qwen2.5:1.5b --holdout --app
 ```
 
 | Run | Exact plans | Correct tools | Correct filters | Correct refusals | Incorrect refusals on supported requests |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | Demo, smoke | 18/18 | 14/14 | 14/14 | 4/4 | 0/14 |
 | Demo, partly tuned diagnostic | 8/12 | 3/7 | 3/7 | 5/5 | 4/7 |
-| qwen2.5:1.5b, diagnostic | 2/12 | 5/7 | 2/7 | 0/5 | 0/7 |
+| Qwen 1.5B, original prompt, raw | 2/12 | 5/7 | 2/7 | 0/5 | 0/7 |
+| Qwen 1.5B, revised prompt, raw | 6/12 | 6/7 | 6/7 | 1/5 | 0/7 |
+| Qwen 1.5B, revised prompt with app checks | 11/12 | 6/7 | 7/7 | 5/5 | 0/7 |
 
-Tool and filter accuracy use all supported questions as their denominator. A refusal scores zero on both. Filters are scored independently of the tool, and product keywords are equivalent if they match the same sample SKUs. The live command sends prompts directly to Ollama so it measures the model's choices, including requests the app can reject before contacting the model. See [model_eval.py](model_eval.py) for the questions and scoring rules.
+Tool and filter accuracy use all supported questions as their denominator. A refusal scores zero on both. Filters are scored independently of the tool, and product keywords are equivalent if they match the same sample SKUs. The raw run sends prompts directly to Ollama. The `--app` run uses the same planner and scope checks as the HTTP API. This diagnostic was reviewed before tuning the prompt and the app checks. Its results are useful for regression checks; new store questions are needed to estimate generalization. See [model_eval.py](model_eval.py) for the questions and scoring rules.
 
 In the [Ollama run on 18 November 2026](https://github.com/opedjfkvos/stockroom-ai/actions/runs/44352150255), Qwen (model ID `65ec06548149`) produced valid plans but often guessed the scope or selected a tool for an unsupported request. Examples:
 
@@ -65,15 +68,17 @@ In the [Ollama run on 18 November 2026](https://github.com/opedjfkvos/stockroom-
 | How much money is tied up in everything on the shelves? | Valued only Audio | Value the whole catalogue |
 | Tell me what to charge for shipping a webcam. | Looked up webcam stock | Decline. The database has no shipping rates |
 
+The [revised run](https://github.com/opedjfkvos/stockroom-ai/actions/runs/44357363346) used the same Qwen model and diagnostic questions. The app removed a category the model had guessed for the webcam and declined all five unsupported requests. One request still failed: “What should we buy more of?” was routed to `compare` instead of `reorder`.
+
 ## How a question is answered
 
 1. A question enters `POST /api/ask`.
 2. Demo mode selects a tool using deterministic rules. Local LLM mode asks Ollama for a JSON object that identifies a tool and optional filters.
-3. Python validates the tool and filters. Unsupported requests return a help message before any inventory tool runs.
+3. Python validates the plan and resolves the actual category and product from the question. For an ambiguous scope, the assistant can request clarification. Unsupported requests return a help message before an inventory tool runs.
 4. SQLite runs the selected query with bound parameters. The connection is read-only after the initial seed.
 5. Python calculates or summarizes the result using the returned records. The model does not generate SQL or inventory quantities.
 
-The API exposes `GET /api/inventory` for the catalogue and dashboard metrics. It exposes `POST /api/ask` with JSON fields `question` and `mode` (`demo` or `ollama`) for the assistant. The server binds to localhost. Demo mode accepts one product or category scope per question, and asks you to split compound requests.
+The API exposes `GET /api/inventory` for the catalogue and dashboard metrics. It exposes `POST /api/ask` with JSON fields `question` and `mode` (`demo` or `ollama`) for the assistant. The server binds to localhost. Both modes ask you to split compound requests.
 
 ## SQLite schema
 

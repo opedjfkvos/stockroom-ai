@@ -63,7 +63,9 @@ def matches(actual, expected):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--demo", action="store_true", help="Evaluate the deterministic router.")
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--demo", action="store_true", help="Evaluate the deterministic router.")
+    modes.add_argument("--app", action="store_true", help="Evaluate Ollama with the app's scope checks.")
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--holdout", action="store_true", help="Use the separate paraphrase and scope suite.")
     args = parser.parse_args()
@@ -72,7 +74,10 @@ def main():
     supported = tool_hits = filter_hits = refused_supported = unsupported = refusal_hits = 0
     for question, expected in cases:
         try:
-            actual = plan_question(question, "demo", args.model) if args.demo else ollama_plan(question, args.model)
+            if args.demo or args.app:
+                actual = plan_question(question, "demo" if args.demo else "ollama", args.model)
+            else:
+                actual = ollama_plan(question, args.model)
         except UnsupportedQuestion:
             actual = None
         except ModelUnavailable as exc:
@@ -94,7 +99,8 @@ def main():
         print(f"{'PASS' if ok else 'MISS'}  {question}")
         if not ok:
             print(f"      expected {expected!r}\n      received {actual!r}")
-    print(f"\n{'Demo' if args.demo else args.model}: {correct}/{len(cases)}")
+    label = "Demo" if args.demo else f"{args.model} with app scope checks" if args.app else args.model
+    print(f"\n{label}: {correct}/{len(cases)}")
     print(f"Tool accuracy on supported questions: {tool_hits}/{supported}")
     print(f"Filter accuracy on supported questions: {filter_hits}/{supported}")
     print(f"Correct refusals: {refusal_hits}/{unsupported}")

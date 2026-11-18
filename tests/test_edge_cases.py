@@ -228,8 +228,11 @@ class OllamaFailureModesTest(unittest.TestCase):
                 self.assert_unavailable(body)
 
     def test_unsupported_plan_returns_none(self):
-        with raw_model_stub(plan_reply({"tool": "unsupported", "category": "", "product": ""})) as endpoint:
-            self.assertIsNone(ollama_plan("Tell me a joke", "test-model", endpoint))
+        for category, product in (("", ""), ("Audio", "headset")):
+            with self.subTest(category=category, product=product):
+                refusal = {"tool": "unsupported", "category": category, "product": product}
+                with raw_model_stub(plan_reply(refusal)) as endpoint:
+                    self.assertIsNone(ollama_plan("Tell me a joke", "test-model", endpoint))
 
     def test_refused_connection_is_model_unavailable(self):
         with self.assertRaises(ModelUnavailable):
