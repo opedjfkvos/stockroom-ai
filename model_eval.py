@@ -4,7 +4,7 @@ import argparse
 import sys
 
 from assistant import DEFAULT_MODEL, ModelUnavailable, UnsupportedQuestion, ollama_plan, plan_question
-from inventory import ITEMS, Plan
+from inventory import ITEMS, Plan, name_matches
 
 SMOKE_CASES = (
     ("What needs reordering?", Plan("reorder")),
@@ -48,7 +48,7 @@ def product_scope(product):
     keyword = product.casefold()
     if not keyword:
         return None
-    return {sku for sku, name, *_ in ITEMS if keyword == sku.casefold() or keyword in name.casefold()}
+    return {sku for sku, name, *_ in ITEMS if keyword == sku.casefold() or name_matches(name, keyword)}
 
 
 def matches(actual, expected):

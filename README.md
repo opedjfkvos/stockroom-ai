@@ -38,7 +38,7 @@ python model_eval.py --demo
 python model_eval.py --model qwen2.5:1.5b
 ```
 
-The small 18-question smoke suite checks the documented Demo behavior in CI. A separate 12-question suite adds unfamiliar phrasings of supported requests and out-of-scope requests. The wording of the Demo rules was left unchanged for this follow-up. The separate suite is diagnostic and does not gate CI.
+The small 18-question smoke suite checks the documented Demo behavior in CI. A separate 12-question suite adds unfamiliar phrasings of supported requests and out-of-scope requests. The separate suite is a public diagnostic and does not gate CI. The reported bugs have their own regression tests.
 
 ```sh
 python model_eval.py --demo --holdout
@@ -48,7 +48,7 @@ python model_eval.py --model qwen2.5:1.5b --holdout
 | Run | Exact plans | Correct tools | Correct filters | Correct refusals | Incorrect refusals on supported requests |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | Demo, smoke | 18/18 | 14/14 | 14/14 | 4/4 | 0/14 |
-| Demo, separate suite | 6/12 | 1/7 | 2/7 | 5/5 | 5/7 |
+| Demo, separate suite | 8/12 | 3/7 | 3/7 | 5/5 | 4/7 |
 | qwen2.5:1.5b | Pending | — | — | — | — |
 
 Tool and filter accuracy use all supported questions as their denominator. A refusal scores zero on both. Filters are scored independently of the tool, and product keywords are equivalent if they match the same sample SKUs. The live command sends prompts directly to Ollama so it measures the model's choices, including requests the app can reject before contacting the model. See [model_eval.py](model_eval.py) for the questions and scoring rules.
@@ -61,20 +61,27 @@ Tool and filter accuracy use all supported questions as their denominator. A ref
 4. SQLite runs the selected query with bound parameters. The connection is read-only after the initial seed.
 5. Python calculates or summarizes the result using the returned records. The model does not generate SQL or inventory quantities.
 
-The API exposes `GET /api/inventory` for the catalogue and dashboard metrics. It exposes `POST /api/ask` with JSON fields `question` and `mode` (`demo` or `ollama`) for the assistant. The sample database is recreated in memory, and the server binds to localhost.
+The API exposes `GET /api/inventory` for the catalogue and dashboard metrics. It exposes `POST /api/ask` with JSON fields `question` and `mode` (`demo` or `ollama`) for the assistant. The server binds to localhost. Demo mode accepts one product or category scope per question, and asks you to split compound requests.
+
+## SQLite schema
+
+On first use the app applies [schema version 1](sql/schema.sql) and seeds a local SQLite file at `data/stockroom.sqlite3`. Set `STOCKROOM_DB` to select a different file. The schema separates categories, products and signed stock movements. The `inventory_status` view joins the catalogue with aggregated movements, so a product with no movements has zero on-hand stock. Foreign keys are enforced during initialization, and indexes support category and movement lookups. App queries open the database read-only.
+
+[Example SQL reports](sql/reports.sql) summarize stock value and replenishment costs by category. The app calculates dashboard totals in SQLite.
 
 ## Verify
 
     python -m unittest discover -s tests -v
 
-The checks cover tool selection, stock totals, reorder quantities, price calculations, invalid input, and the HTTP integration with a stand-in for Ollama. This exercises the request and response contract. It does not measure the quality of a live model.
+Tests cover Demo routing, stock and price calculations, the real `POST /api/ask` endpoint, and persistence and read-only access in SQLite. Separate tests exercise the Ollama client against a stub server. Live-model quality is measured by the standalone evaluation when Ollama is available.
 
 The GitHub Actions workflow is configured to run the unit tests and the Demo evaluation on Python 3.10 and 3.12.
 
 ## Files
 
 - `app.py` serves the client and the JSON endpoints.
-- `inventory.py` seeds SQLite and implements the five inventory tools.
+- `inventory.py` initializes SQLite and implements the five inventory tools.
+- `sql/` contains the schema and reporting queries.
 - `assistant.py` routes demo requests and validates Ollama plans.
 - `static/` contains the dashboard.
 - `tests/` contains the regression checks.

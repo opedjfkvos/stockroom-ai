@@ -3,6 +3,7 @@
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+from tempfile import TemporaryDirectory
 from threading import Thread
 import unittest
 from unittest.mock import patch
@@ -39,6 +40,13 @@ def model_stub(plan):
 
 
 class AssistantTest(unittest.TestCase):
+    def setUp(self):
+        directory = TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        environment = patch.dict("os.environ", {"STOCKROOM_DB": directory.name + "/inventory.sqlite3"})
+        environment.start()
+        self.addCleanup(environment.stop)
+
     def test_metrics(self):
         self.assertEqual(snapshot()["metrics"], {
             "products": 14, "units": 178, "reorder": 5, "value_cents": 737290,
@@ -60,6 +68,19 @@ class AssistantTest(unittest.TestCase):
                 self.assertEqual(result["plan"]["tool"], tool)
                 self.assertEqual(len(result["rows"]), count)
                 self.assertIn(expected, result["answer"])
+
+    def test_demo_catalogue_word_forms_and_valuation(self):
+        for question, sku, tool in (
+            ("Do we have any mice?", "PER-502", "lookup"),
+            ("Do we have any cables?", "ACC-102", "lookup"),
+            ("Show stock of USB Drive", "STO-602", "lookup"),
+            ("What is the value of STO-601?", "STO-601", "valuation"),
+        ):
+            with self.subTest(question=question):
+                result = query_inventory(question)
+                self.assertEqual(result["plan"]["tool"], tool)
+                self.assertEqual([row["sku"] for row in result["rows"]], [sku])
+        self.assertIn("1 product needs replenishment", query_inventory("What needs reordering in Audio?")["answer"])
 
     def test_invalid_inputs(self):
         for question, mode in [("", "demo"), ("a" * 281, "demo"), ("Hello", "other"), (42, "demo")]:

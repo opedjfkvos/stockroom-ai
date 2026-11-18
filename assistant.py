@@ -6,7 +6,7 @@ import re
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
-from inventory import CATEGORIES, ITEMS, TOOLS, Plan, answer_from_rows, run_tool
+from inventory import CATEGORIES, ITEMS, TOOLS, Plan, answer_from_rows, name_matches, run_tool, tokens
 
 DEFAULT_MODEL = "qwen2.5:1.5b"
 OUT_OF_SCOPE = (
@@ -53,35 +53,54 @@ class UnsupportedQuestion(ValueError):
     """The question falls outside the supported inventory queries."""
 
 
+def product_filter(question):
+    sku_mentions = re.findall(r"\b[a-z]{3}-[0-9]+\b", question)
+    if sku_mentions:
+        return sku_mentions[0].upper()
+
+    words = tokens(question)
+    product_names = [(sku, name) for sku, name, *_ in ITEMS]
+    for width in range(min(len(words), max(len(tokens(name)) for _, name in product_names)), 0, -1):
+        for start in range(len(words) - width + 1):
+            keyword = " ".join(words[start:start + width])
+            if keyword in {"usb", "wi", "fi", "c", "gb", "tb"} or keyword.isdecimal():
+                continue
+            matching = [sku for sku, name in product_names if name_matches(name, keyword)]
+            if matching:
+                return matching[0] if len(matching) == 1 else keyword
+    return ""
+
+
 def demo_plan(question):
     """Deterministic keyword routing so reviewers can try the app without a model."""
     normalized = question.casefold()
-    if "out of stock" in normalized:
+    if re.search(r"\b(?:and|or)\b", normalized):
+        raise UnsupportedQuestion("Ask about one product or category at a time.")
+    words = set(tokens(normalized))
+    categories = [name for name in CATEGORIES if set(tokens(name)) <= words]
+    if len(categories) > 1:
+        raise UnsupportedQuestion("Ask about one category at a time.")
+    category = categories[0] if categories else ""
+    product = product_filter(normalized)
+
+    if re.search(r"\b(out of stock|sold out)\b", normalized):
         tool = "out_of_stock"
     elif re.search(r"\b(reorder(?:ing)?|replenish(?:ment)?|low stock|below (?:the )?(?:minimum|reorder point))\b", normalized):
         tool = "reorder"
     elif re.search(r"\b(inventory value|stock value|inventory valuation|stock worth|value of (?:the )?(?:inventory|stock))\b", normalized):
+        tool = "valuation"
+    elif (product or category) and re.search(r"\b(value of|worth)\b", normalized):
         tool = "valuation"
     elif re.search(r"\b(most stock|highest stock|compare stock|rank by stock)\b", normalized):
         tool = "compare"
     else:
         tool = "lookup"
 
-    category = next((name for name in CATEGORIES if name.casefold() in normalized), "")
-    words = re.sub(r"[^a-z0-9-]", " ", normalized).split()
-    matches = [row for row in ITEMS if row[0].casefold() in words or row[1].casefold() in normalized]
-    if not matches:
-        aliases = ("webcam", "keyboard", "mouse", "headset", "router", "ssd", "hub", "microphone", "monitor")
-        alias = next((token for token in aliases if token in words or token + "s" in words), "")
-        matches = [row for row in ITEMS if alias and alias in row[1].casefold()]
-        if len(matches) > 1:
-            return Plan(tool, category, alias)
-    product = matches[0][0] if len(matches) == 1 else ""
     if tool == "lookup":
         lookup_intent = re.search(
             r"^(?:show|list|what about|do we have|how many|stock (?:for|of|in))\b",
             normalized,
-        ) or re.search(r"\b(?:units|in stock|inventory)\b", normalized)
+        ) or re.search(r"\b(?:units|in stock|inventory|on hand)\b|\b(?:are there|there are) any .+ left\b", normalized)
         catalogue_request = re.fullmatch(
             r"(?:show|list) (?:me )?(?:the |all )?(?:current )?(?:inventory|products|items|stock)[?.]?",
             normalized,
