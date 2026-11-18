@@ -4,35 +4,132 @@ on:
     branches: [portfolio-verification]
     paths: [.github/workflows/publish-windows-release.yml]
 permissions:
-  actions: read
-  contents: write
+  contents: read
+env:
+  VERIFIED_COMMIT: c15b52c16deb7f5fd3a81fc2c58423266576317d
 jobs:
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: c15b52c16deb7f5fd3a81fc2c58423266576317d
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install --no-save playwright && npx playwright install --with-deps chromium
+      - name: Verify the globe selector, localized answers and CSV
+        run: |
+          set -euo pipefail
+          STOCKROOM_IMPORT_DB="$RUNNER_TEMP/stockroom-ui.sqlite3" python app.py --port 8927 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          curl -fs --retry 10 --retry-connrefused --retry-delay 1 http://127.0.0.1:8927/ >/dev/null
+          cat > i18n-smoke.mjs <<'SCRIPT'
+          import assert from "node:assert/strict";
+          import { chromium } from "playwright";
+          const browser=await chromium.launch({args:["--no-sandbox"]});
+          try {
+            const page=await browser.newPage({viewport:{width:1180,height:900}});
+            const errors=[];
+            page.on("pageerror", error=>errors.push(error.message));
+            await page.goto("http://127.0.0.1:8927/?lang=ru");
+            await page.getByRole("heading",{name:"Обзор склада"}).waitFor();
+            await page.getByRole("button",{name:"Что нужно докупить?"}).click();
+            await page.getByRole("button",{name:"Спросить",exact:true}).click();
+            await page.getByText(/докупить 20 шт/).waitFor();
+            await page.locator("#language").selectOption("uk");
+            await page.getByRole("heading",{name:"Огляд складу"}).waitFor();
+            await page.getByRole("button",{name:"Скільки всього одиниць на складі?"}).click();
+            await page.getByRole("button",{name:"Запитати",exact:true}).click();
+            await page.getByText(/178 шт/).waitFor();
+            await page.getByText("Імпорт Excel або CSV з 1С",{exact:true}).click();
+            await page.locator("#import-file").setInputFiles({name:"small.csv",mimeType:"text/csv",buffer:Buffer.from("Артикул;Номенклатура;Категория;Остаток;Минимальный остаток;Закупочная цена\n0002;Кава;Напої;3;5;22,50\n")});
+            await page.locator("#import-currency").selectOption("PLN");
+            await page.getByRole("button",{name:"Попередній перегляд"}).click();
+            await page.getByRole("button",{name:"Підтвердити імпорт",exact:true}).click();
+            await page.getByRole("button",{name:"Запитати про товар Кава (0002)"}).click();
+            await page.getByRole("button",{name:"Запитати",exact:true}).click();
+            await page.getByText(/Кава — у наявності 3 шт/).waitFor();
+            await page.reload();
+            await page.getByRole("heading",{name:"Огляд складу"}).waitFor();
+            assert.equal(await page.locator("#inventory-source").inputValue(),"imported");
+            assert.deepEqual(errors,[]);
+            console.log("PASS: Russian and Ukrainian globe UI, totals, Cyrillic CSV, exact SKU and preference on reload.");
+          } finally { await browser.close(); }
+          SCRIPT
+          node i18n-smoke.mjs
+  ollama:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: c15b52c16deb7f5fd3a81fc2c58423266576317d
+      - name: Download the real model and test both languages
+        run: |
+          set -euo pipefail
+          docker run -d --name stockroom-ollama -e OLLAMA_HOST=0.0.0.0:11434 -p 127.0.0.1:11434:11434 ollama/ollama
+          curl -fs --retry 25 --retry-all-errors --retry-delay 2 http://127.0.0.1:11434/api/tags
+          python - <<'PY'
+          from assistant import DEFAULT_MODEL, query_inventory
+          from ollama_setup import installed_models, pull_model
+          assert DEFAULT_MODEL not in installed_models()
+          pull_model(DEFAULT_MODEL, lambda percent: None)
+          assert DEFAULT_MODEL in installed_models()
+          print("Model downloaded and found by the wizard.")
+          for lang, question, expected in (
+              ("ru", "Что нужно докупить?", "докупить 20 шт."),
+              ("uk", "Скільки всього одиниць на складі?", "178 шт."),
+              ("uk", "Що з артикулом DSP-301?", "у наявності 0 шт."),
+          ):
+              answer = query_inventory(question, "ollama", language=lang)["answer"]
+              print(answer)
+              assert expected in answer
+          PY
   release:
+    needs: [browser, ollama]
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: write
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
     steps:
-      - name: Verify and publish the tested Windows build
-        shell: bash
+      - name: Publish the verified Windows build
         run: |
           set -euo pipefail
-          gh api "repos/$GH_REPO/actions/artifacts/14457934891/zip" > StockroomAI-Windows.zip
-          sha256sum -c <<< 'bcfcd76202d6d6374a8e1dd974b14130b5c9e41f640ec3ed7c0c85232f379af3  StockroomAI-Windows.zip'
+          run=44377203724
+          gh run watch "$run" --exit-status
+          test "$(gh api "repos/$GH_REPO/actions/runs/$run" --jq .head_sha)" = "$VERIFIED_COMMIT"
+          artifact=$(gh api "repos/$GH_REPO/actions/runs/$run/artifacts" --jq '.artifacts[] | select(.name == "StockroomAI-Windows" and .expired == false) | [.id, .digest] | @tsv')
+          read -r id digest <<< "$artifact"
+          test -n "$id"
+          test "${digest#sha256:}" != "$digest"
+          gh api "repos/$GH_REPO/actions/artifacts/$id/zip" > StockroomAI-Windows.zip
+          sha256sum -c <<< "${digest#sha256:}  StockroomAI-Windows.zip"
           unzip -t StockroomAI-Windows.zip
           cat > release-notes.md <<'NOTES'
-          ## Windows download
+          ## Windows · Русский · Українська · English
 
-          Download **StockroomAI-Windows.zip** from **Assets**, extract it, then double-click **StockroomAI.exe**. The launcher opens the dashboard in your default browser. Keep the launcher open while using it.
+          Download **StockroomAI-Windows.zip** under **Assets**, extract it, and open **StockroomAI.exe**. All three languages are included in the same app. Choose your language in the globe menu.
 
-          - Choose **Import Excel or CSV from 1C** to load an Excel or CSV export.
-          - **Stock search** works out of the box. No separate Python installation is needed.
-          - **Local LLM** uses an existing Ollama installation with an installed model. Use **Start local AI** in the launcher to start Ollama.
+          ### Русский
 
-          This is an unsigned Windows build. The executable passed an automated Windows check covering the dashboard, Excel import and exact SKU lookup.
+          Нажмите **Запустить локальный ИИ**. При необходимости мастер откроет официальную страницу установки Ollama. После установки нажмите кнопку ещё раз и подтвердите загрузку модели. Как только она готова, дашборд откроется в режиме локального ИИ. Консоль не нужна.
 
-          [Windows build and verification](https://github.com/opedjfkvos/stockroom-ai/actions/runs/44372024705)
+          Попробуйте: «Что нужно докупить?» или «Что по артикулу 000001?». Поиск по складу и импорт Excel/CSV доступны и без модели.
+
+          ### Українська
+
+          Натисніть **Запустити локальний ШІ**. За потреби майстер відкриє офіційну сторінку встановлення Ollama. Після встановлення натисніть кнопку ще раз і підтвердьте завантаження моделі. Коли модель готова, дашборд відкриється в режимі локального ШІ. Консоль не потрібна.
+
+          Спробуйте: «Що потрібно докупити?» або «Що з артикулом 000001?». Пошук на складі й імпорт Excel/CSV доступні й без моделі.
+
+          [Windows build and verification](https://github.com/opedjfkvos/stockroom-ai/actions/runs/44377203724)
           NOTES
-          gh release create v0.1.0 StockroomAI-Windows.zip --target 6bee1b04e438465bbc042c48aaedfeeaf4ab21f8 --title 'Stockroom AI 0.1.0' --notes-file release-notes.md --latest
-          gh release view v0.1.0 --json url,tagName,isDraft,isLatest,assets
+          gh release create v0.2.0 StockroomAI-Windows.zip --target "$VERIFIED_COMMIT" --title 'Stockroom AI 0.2.0 — guided setup and three languages' --notes-file release-notes.md --latest
+          gh release view v0.2.0 --json url,tagName,isDraft,assets
