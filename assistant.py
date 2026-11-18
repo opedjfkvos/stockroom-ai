@@ -94,6 +94,8 @@ def question_scope(question, products, categories):
         raise UnsupportedQuestion("Ask about one product or category at a time.")
 
     sku_mentions = re.findall(r"\b[a-z][a-z0-9]{0,19}-[0-9][a-z0-9-]*\b", question)
+    sku_mentions.extend(re.findall(r"\bsku\s+([\w.-]+)", question))
+    sku_mentions = list(dict.fromkeys(sku_mentions))
     if len(set(sku_mentions)) > 1:
         raise UnsupportedQuestion("Ask about one product or category at a time.")
 
@@ -235,7 +237,7 @@ def plan_question(question, mode, model):
     return Plan(tool, category, product, allowed_categories=categories)
 
 
-def query_inventory(question, mode="demo"):
+def query_inventory(question, mode="demo", *, currency="USD"):
     model = os.environ.get("STOCKROOM_MODEL", DEFAULT_MODEL)
     plan = plan_question(question, mode, model)
     rows = run_tool(plan)
@@ -244,7 +246,7 @@ def query_inventory(question, mode="demo"):
         and bool(run_tool(Plan("lookup", category=plan.category, product=plan.product, allowed_categories=None)))
     )
     return {
-        "answer": answer_from_rows(plan, rows, scope_exists=scope_exists),
+        "answer": answer_from_rows(plan, rows, scope_exists=scope_exists, currency=currency),
         "plan": plan.to_dict(),
         "rows": rows,
         "mode": mode,

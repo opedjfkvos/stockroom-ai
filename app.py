@@ -6,10 +6,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
 import sqlite3
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from assistant import EXAMPLES, ModelUnavailable, query_inventory
-from inventory import snapshot
+from inventory import snapshot, use_inventory
+from inventory_import import MAX_BYTES, import_inventory, state
 
 STATIC = Path(__file__).resolve().parent / "static"
 ASSETS = {
@@ -34,14 +35,23 @@ class Handler(BaseHTTPRequestHandler):
         self.respond(status, json.dumps(data).encode(), "application/json; charset=utf-8")
 
     def do_GET(self):
-        path = urlsplit(self.path).path
+        route = urlsplit(self.path)
+        path = route.path
         if path == "/api/inventory":
+            source = parse_qs(route.query).get("source", ["sample"])[0]
             try:
-                inventory = snapshot()
+                with use_inventory(source):
+                    inventory = snapshot()
+                    currency = state()[1] if source == "imported" else "USD"
+            except ValueError as exc:
+                self.json_response(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
             except sqlite3.Error as exc:
                 self.database_error(exc)
             else:
-                self.json_response(HTTPStatus.OK, {**inventory, "examples": EXAMPLES})
+                self.json_response(HTTPStatus.OK, {**inventory, "examples": EXAMPLES, "currency": currency})
+        elif path == "/one-c-stock.csv":
+            template = STATIC.parent / "examples" / "one-c-stock.csv"
+            self.respond(HTTPStatus.OK, b"\xef\xbb\xbf" + template.read_bytes(), "text/csv; charset=utf-8")
         elif path in ASSETS:
             filename, mime = ASSETS[path]
             self.respond(HTTPStatus.OK, (STATIC / filename).read_bytes(), mime)
@@ -49,17 +59,24 @@ class Handler(BaseHTTPRequestHandler):
             self.json_response(HTTPStatus.NOT_FOUND, {"error": "Page not found."})
 
     def do_POST(self):
-        if urlsplit(self.path).path != "/api/ask":
+        route = urlsplit(self.path)
+        if route.path not in ("/api/ask", "/api/import/preview", "/api/import/confirm"):
             self.json_response(HTTPStatus.NOT_FOUND, {"error": "Endpoint not found."})
             return
         try:
-            size = int(self.headers.get("Content-Length", "0"))
-            if not 0 < size <= 4096 or self.headers.get_content_type() != "application/json":
-                raise ValueError("Send a JSON object up to 4 KB.")
-            payload = json.loads(self.rfile.read(size))
-            if not isinstance(payload, dict):
-                raise ValueError("Send a JSON object.")
-            result = query_inventory(payload.get("question"), payload.get("mode", "demo"))
+            if route.path == "/api/ask":
+                payload = json.loads(self.read_body(4096, "application/json"))
+                if not isinstance(payload, dict):
+                    raise ValueError("Send a JSON object.")
+                source = payload.get("source", "sample")
+                with use_inventory(source):
+                    currency = state()[1] if source == "imported" else "USD"
+                    if not currency:
+                        raise ValueError("Import a spreadsheet before asking about imported inventory.")
+                    result = query_inventory(payload.get("question"), payload.get("mode", "demo"),
+                                             currency=currency)
+            else:
+                result = self.handle_import(route)
         except ValueError as exc:
             self.json_response(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
         except sqlite3.Error as exc:
@@ -68,6 +85,28 @@ class Handler(BaseHTTPRequestHandler):
             self.json_response(HTTPStatus.SERVICE_UNAVAILABLE, {"error": str(exc)})
         else:
             self.json_response(HTTPStatus.OK, result)
+
+    def read_body(self, limit, mime):
+        size = int(self.headers.get("Content-Length", "0"))
+        if not 0 < size <= limit or self.headers.get_content_type() != mime:
+            raise ValueError(f"Send {mime} data up to {limit // 1024:,} KB.")
+        return self.rfile.read(size)
+
+    def handle_import(self, route):
+        host = self.headers.get("Host", "").split(":", 1)[0].lower()
+        if host not in {"127.0.0.1", "localhost"}:
+            raise ValueError("Inventory imports are available on localhost.")
+        if self.headers.get("X-Stockroom-Import") != "1":
+            raise ValueError("Use the Stockroom import form.")
+        data = self.read_body(MAX_BYTES, "application/octet-stream")
+        params = parse_qs(route.query)
+        confirmation = None
+        if route.path.endswith("/confirm"):
+            confirmation = self.headers.get("X-Stockroom-Confirmation", "")
+            if not confirmation:
+                raise ValueError("Preview the spreadsheet before importing.")
+        return import_inventory(params.get("filename", [""])[0], data, params.get("currency", [""])[0],
+                                confirmation=confirmation)
 
     def database_error(self, exc):
         self.log_error("SQLite inventory error: %s", exc)

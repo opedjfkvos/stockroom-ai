@@ -5,23 +5,55 @@ on:
 permissions:
   contents: read
 jobs:
-  ollama:
+  spreadsheet-browser:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Start Ollama
+      - run: |
+          python -m pip install -r requirements.txt playwright
+          python -m playwright install --with-deps chromium
+      - name: Import a 1C CSV and an Excel workbook in Chromium
         run: |
-          docker run -d --name ollama -e OLLAMA_HOST=0.0.0.0:11434 -p 127.0.0.1:11434:11434 ollama/ollama
-          curl --fail --retry 25 --retry-all-errors --retry-delay 2 http://127.0.0.1:11434/api/tags
-          docker exec ollama ollama pull qwen2.5:1.5b
-          docker exec ollama ollama run qwen2.5:1.5b "Say ready."
-          docker exec ollama ollama list
-      - name: Score raw model
-        continue-on-error: true
-        run: python model_eval.py --model qwen2.5:1.5b --holdout
-      - name: Score application
-        run: python model_eval.py --model qwen2.5:1.5b --holdout --app
+          python - <<'PY'
+          import subprocess
+          from pathlib import Path
+          from openpyxl import Workbook
+          from playwright.sync_api import sync_playwright, expect
+          workbook = Workbook()
+          workbook.active.append(["sku","name","category","stock","minimum","unit_cost"])
+          workbook.active.append(["0002","Grinder","Accessories",3,5,80])
+          workbook.save("store.xlsx")
+          with subprocess.Popen(["python", "app.py", "--port", "0"], stdout=subprocess.PIPE, text=True) as server:
+              try:
+                  url = server.stdout.readline().split()[-1]
+                  with sync_playwright() as playwright:
+                      browser = playwright.chromium.launch()
+                      page = browser.new_page()
+                      page.goto(url)
+                      expect(page.locator("#metric-products")).to_have_text("14")
+                      page.get_by_text("Import Excel or CSV from 1C").click()
+                      page.locator("#import-file").set_input_files("examples/one-c-stock.csv")
+                      page.locator("#import-currency").select_option("PLN")
+                      page.get_by_role("button", name="Preview").click()
+                      expect(page.locator("#import-table")).to_contain_text("Кофе 250 г")
+                      expect(page.locator("#metric-products")).to_have_text("14")
+                      page.get_by_role("button", name="Confirm import").click()
+                      expect(page.locator("#metric-products")).to_have_text("3")
+                      page.locator("#import-file").set_input_files("store.xlsx")
+                      page.get_by_role("button", name="Preview").click()
+                      expect(page.locator("#import-table")).to_contain_text("0002")
+                      page.get_by_role("button", name="Confirm import").click()
+                      expect(page.locator("#metric-products")).to_have_text("4")
+                      page.locator("#question").fill("What about SKU 0002?")
+                      page.get_by_role("button", name="Ask", exact=True).click()
+                      expect(page.locator("#result")).to_contain_text("Grinder has 3 units")
+                      page.locator("#inventory-source").select_option("sample")
+                      expect(page.locator("#metric-products")).to_have_text("14")
+                      browser.close()
+              finally:
+                  server.terminate()
+          PY

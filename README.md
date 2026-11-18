@@ -27,6 +27,24 @@ Try these examples:
 
 Select **Evidence** after an answer to inspect the tool, scope, source records and unit costs. The dashboard reloads inventory after each successful question. The catalogue can also be filtered by name or SKU, category and stock status.
 
+## Import Excel or a 1C export
+
+Install the optional Excel dependencies before importing an `.xlsx` file:
+
+```sh
+python -m pip install -r requirements.txt
+```
+
+1. Open **Import Excel or CSV from 1C**. Choose an `.xlsx` or `.csv` file and its currency. The [sample 1C-style CSV](examples/one-c-stock.csv) shows the expected format.
+2. Select **Preview** and check the first ten rows and the validation messages. Save formulas as values, store SKUs with leading zeros as text and export one row per SKU.
+3. Select **Confirm import**. The app switches to **Imported inventory**. You can return to **Sample inventory** with the inventory selector.
+
+The file needs **SKU, product name, category, on-hand quantity, minimum quantity and unit cost**. For an export lacking minimums or unit costs, add those columns before importing. Whole-unit quantities are supported. The importer accepts common English, Russian and Ukrainian headers, including `Артикул`, `Номенклатура`, `Остаток` and `Закупочная цена`. It reads the first worksheet in XLSX and accepts UTF-8 or Windows-1251 CSV. Move the header into the first 25 rows and remove totals and subtotals.
+
+Imports update only the listed SKUs, recording the difference as a stock movement. To set an item to zero, include a row with zero stock. A confirmed import is atomic and uses a separate database. The default imported database is `data/stockroom-imported.sqlite3`; set `STOCKROOM_IMPORT_DB` to use another path. The first import fixes the currency for that database. Importing a file does not require Ollama. Ask about imported items in English using their exact catalogue names or SKU, for example `What about SKU 0002?`.
+
+The 1C option reads exported files. Column names can vary by configuration, so compare your first export with the template. Automatic synchronisation and direct database access are outside this import workflow.
+
 ## Run with a local language model
 
 Start Ollama and install the example model.
@@ -57,6 +75,8 @@ python model_eval.py --model qwen2.5:1.5b --holdout --app
 | Qwen 1.5B, original prompt, raw | 2/12 | 5/7 | 2/7 | 0/5 | 0/7 |
 | Qwen 1.5B, revised prompt, raw (562f1a8) | 6/12 | 6/7 | 6/7 | 1/5 | 0/7 |
 | Qwen 1.5B, revised prompt with app checks (562f1a8) | 11/12 | 6/7 | 7/7 | 5/5 | 0/7 |
+| Qwen 1.5B, live catalogue revision, raw | 4/12 | 5/7 | 4/7 | 1/5 | 0/7 |
+| Qwen 1.5B, live catalogue revision with app checks | 11/12 | 6/7 | 7/7 | 5/5 | 0/7 |
 
 Tool and filter accuracy use all supported questions as their denominator. A refusal scores zero on both. Filters are scored independently of the tool, and product keywords are equivalent if they match the same sample SKUs. The raw run sends prompts directly to Ollama. The `--app` run uses the same planner and scope checks as the HTTP API. This diagnostic was reviewed before tuning the prompt and the app checks. Its results are useful for regression checks; new store questions are needed to estimate generalization. See [model_eval.py](model_eval.py) for the questions and scoring rules.
 
@@ -69,6 +89,8 @@ In the [Ollama run on 18 November 2026](https://github.com/opedjfkvos/stockroom-
 | Tell me what to charge for shipping a webcam. | Looked up webcam stock | Decline. The database has no shipping rates |
 
 The [revised run](https://github.com/opedjfkvos/stockroom-ai/actions/runs/44357363346) used the same Qwen model and diagnostic questions. The app removed a category the model had guessed for the webcam and declined all five unsupported requests. One request still failed: “What should we buy more of?” was routed to `compare` instead of `reorder`.
+
+The [live-catalogue run](https://github.com/opedjfkvos/stockroom-ai/actions/runs/44363807156) routed that purchase question correctly. Its remaining app error was “Between the accessories, what do we have the biggest pile of?” Ollama chose `lookup` instead of `compare`. The raw score dropped after the output schema and prompt changed. These are results from the same 12-question diagnostic, including its known paraphrases.
 
 ## How a question is answered
 
