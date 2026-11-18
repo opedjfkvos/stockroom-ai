@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Stockroom AI</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="identity"><span class="mark" aria-hidden="true">S</span><strong>Stockroom AI</strong></div>
+    <span class="environment">Sample inventory · USD</span>
+  </header>
+  <main>
+    <section class="intro">
+      <div><h1>Inventory overview</h1><p>Track stock levels and ask questions about your inventory.</p></div>
+      <div class="source"><span></span> SQLite data source</div>
+    </section>
+    <p id="load-error" class="hidden" role="alert"></p>
+    <section class="metrics" aria-label="Inventory metrics">
+      <article><span>Products</span><strong id="metric-products">—</strong><small>Unique SKUs</small></article>
+      <article><span>Units on hand</span><strong id="metric-units">—</strong><small>Across all categories</small></article>
+      <article class="reorder"><span>Needs reorder</span><strong id="metric-reorder">—</strong><small>Below minimum stock</small></article>
+      <article><span>Inventory value</span><strong id="metric-value">—</strong><small>At unit cost</small></article>
+    </section>
+    <div class="workspace">
+      <section class="panel assistant" aria-labelledby="assistant-title">
+        <div class="section-head">
+          <div><h2 id="assistant-title">Inventory assistant</h2><p id="mode-help">Local demo with preset routing.</p></div>
+          <label><span class="sr-only">Assistant mode</span>
+            <select id="mode"><option value="demo">Demo</option><option value="ollama">Local LLM</option></select>
+          </label>
+        </div>
+        <div class="examples" id="examples" aria-label="Example questions"></div>
+        <form id="ask-form">
+          <label class="sr-only" for="question">Inventory question</label>
+          <input id="question" placeholder="Ask about stock, reorders or value…" maxlength="280" required>
+          <button type="submit" id="ask">Ask</button>
+        </form>
+        <div id="result" role="status" aria-live="polite" class="result">
+          <p>Ask a question to see the answer and the records behind it.</p>
+        </div>
+      </section>
+      <section class="panel chart" aria-labelledby="chart-title">
+        <div class="section-head"><div><h2 id="chart-title">Stock by category</h2><p>Units on hand</p></div></div>
+        <div id="bars" class="bars"></div>
+      </section>
+    </div>
+    <section class="panel catalog" aria-labelledby="catalog-title">
+      <div class="section-head">
+        <div><h2 id="catalog-title">Product inventory</h2><p id="record-count" role="status"></p></div>
+        <div class="filters">
+          <label><span class="sr-only">Search product name or SKU</span><input id="filter" type="search" placeholder="Search name or SKU"></label>
+          <label><span class="sr-only">Filter by category</span><select id="category"><option value="">All categories</option></select></label>
+          <label><span class="sr-only">Filter by availability</span><select id="stock"><option value="">Any stock level</option><option>Healthy</option><option>Low stock</option><option>Out of stock</option></select></label>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">Product</th><th scope="col">Category</th><th scope="col">On hand</th><th scope="col">Reorder point</th><th scope="col">Unit cost</th><th scope="col">Status</th></tr></thead>
+          <tbody id="table-body"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
