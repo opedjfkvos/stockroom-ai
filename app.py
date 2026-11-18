@@ -6,6 +6,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
 import sqlite3
+import sys
 from urllib.parse import parse_qs, urlsplit
 
 from assistant import EXAMPLES, ModelUnavailable, query_inventory
@@ -21,6 +22,10 @@ ASSETS = {
 
 
 class Handler(BaseHTTPRequestHandler):
+    def log_message(self, format, *args):
+        if sys.stderr is not None:
+            super().log_message(format, *args)
+
     def respond(self, status, payload, mime):
         self.send_response(status)
         self.send_header("Content-Type", mime)

@@ -390,6 +390,11 @@ class HttpErrorHandlingTest(TempDatabaseCase):
         with caught.exception as response:
             return response.code, json.load(response)
 
+    def test_http_server_works_without_a_console(self):
+        with serve(Handler) as base, patch("sys.stderr", None):
+            with urlopen(base + "/api/inventory", timeout=5) as response:
+                self.assertEqual(json.load(response)["metrics"]["products"], 14)
+
     def test_malformed_requests_get_a_json_400(self):
         with serve(Handler) as base:
             for name, body, kwargs in (
