@@ -170,7 +170,7 @@ def ollama_plan(question, model, endpoint="http://127.0.0.1:11434"):
         plan = json.loads(json.loads(reply)["message"]["content"])
         if not isinstance(plan, dict) or set(plan) != set(PLAN_SCHEMA["required"]):
             raise ValueError("Invalid plan shape.")
-        if plan == {"tool": "unsupported", "category": "", "product": ""}:
+        if plan["tool"] == "unsupported":
             return None
         return Plan(**plan)
     except (OSError, HTTPException, ValueError, TypeError, KeyError) as exc:

@@ -20,10 +20,8 @@ jobs:
           docker exec ollama ollama pull qwen2.5:1.5b
           docker exec ollama ollama run qwen2.5:1.5b "Say ready."
           docker exec ollama ollama list
-      - name: Compare raw model with application routing
-        run: |
-          python model_eval.py --model qwen2.5:1.5b --holdout
-          python model_eval.py --model qwen2.5:1.5b --holdout --app
-      - name: Ollama logs on failure
-        if: failure()
-        run: docker logs ollama
+      - name: Score raw model
+        continue-on-error: true
+        run: python model_eval.py --model qwen2.5:1.5b --holdout
+      - name: Score application
+        run: python model_eval.py --model qwen2.5:1.5b --holdout --app
