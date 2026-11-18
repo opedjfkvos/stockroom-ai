@@ -13,6 +13,7 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from app import Handler
+from assistant import query_inventory
 from inventory import connect, snapshot
 
 
@@ -67,3 +68,32 @@ class ApiTest(unittest.TestCase):
             with self.assertRaisesRegex(sqlite3.OperationalError, "readonly"):
                 db.execute("DELETE FROM stock_movements")
         self.assertEqual(snapshot()["metrics"]["units"], 183)
+        with closing(sqlite3.connect(self.db_path)) as db, db:
+            db.execute(
+                "INSERT INTO stock_movements(sku, quantity_delta, reason) VALUES (?, ?, ?)",
+                ("DSP-301", -3, "Dispatch"),
+            )
+        with closing(connect()) as db:
+            row = db.execute("SELECT stock, status FROM inventory_status WHERE sku = ?", ("DSP-301",)).fetchone()
+            self.assertEqual(tuple(row), (2, "Low stock"))
+        self.assertEqual(snapshot()["metrics"]["units"], 180)
+
+    def test_sql_reports_reconcile_with_inventory(self):
+        reports = Path(__file__).resolve().parents[1] / "sql" / "reports.sql"
+        valuation, reorder, remainder = reports.read_text(encoding="utf-8").split(";")
+        self.assertFalse(remainder.strip())
+        with closing(connect()) as db:
+            valuation_rows = db.execute(valuation).fetchall()
+            reorder_rows = db.execute(reorder).fetchall()
+
+        metrics = snapshot()["metrics"]
+        for report_column, metric in (
+            ("products", "products"), ("units_on_hand", "units"), ("inventory_value_cents", "value_cents"),
+        ):
+            self.assertEqual(sum(row[report_column] for row in valuation_rows), metrics[metric])
+        self.assertEqual(sum(row["products_below_minimum"] for row in reorder_rows), metrics["reorder"])
+        needs = query_inventory("What needs reordering?")["rows"]
+        self.assertEqual(sum(row["units_to_order"] for row in reorder_rows),
+                         sum(row["minimum"] - row["stock"] for row in needs))
+        self.assertEqual(sum(row["reorder_cost_cents"] for row in reorder_rows),
+                         sum((row["minimum"] - row["stock"]) * row["unit_cents"] for row in needs))

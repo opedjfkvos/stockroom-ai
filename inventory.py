@@ -160,12 +160,15 @@ def answer_from_rows(plan, rows):
         return f"{len(rows)} products need replenishment. Add {shortage} units to reach their reorder points."
     if plan.tool == "valuation":
         cents = sum(row["stock"] * row["unit_cents"] for row in rows)
-        return f"Current inventory value is ${cents / 100:,.2f} across {len(rows)} products."
+        scope = "1 product" if len(rows) == 1 else f"{len(rows)} products"
+        return f"Current inventory value is ${cents / 100:,.2f} across {scope}."
     if plan.tool == "compare":
         highest = rows[0]
         return f"{highest['name']} has the most stock in this result, with {highest['stock']} units."
     if len(rows) == 1:
         row = rows[0]
         return f"{row['name']} has {row['stock']} units in stock. Reorder point: {row['minimum']}."
+    if plan.product:
+        return f"Found {len(rows)} matching products. Use a product name or SKU to narrow the search."
     units = sum(row["stock"] for row in rows)
     return f"Found {len(rows)} matching products with {units} units in stock."
