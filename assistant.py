@@ -59,6 +59,9 @@ def product_filter(question):
         return sku_mentions[0].upper()
 
     words = tokens(question)
+    generic_usb_lookup = re.search(r"\bdo we have (?:any )?usb[?.]?$", question)
+    if generic_usb_lookup:
+        return "usb"
     product_names = [(sku, name) for sku, name, *_ in ITEMS]
     for width in range(min(len(words), max(len(tokens(name)) for _, name in product_names)), 0, -1):
         for start in range(len(words) - width + 1):

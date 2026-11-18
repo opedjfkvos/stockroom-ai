@@ -82,6 +82,16 @@ class AssistantTest(unittest.TestCase):
                 self.assertEqual([row["sku"] for row in result["rows"]], [sku])
         self.assertIn("1 product needs replenishment", query_inventory("What needs reordering in Audio?")["answer"])
 
+    def test_demo_usb_search_and_single_product_valuation(self):
+        result = query_inventory("Do we have USB?")
+        self.assertEqual({row["sku"] for row in result["rows"]}, {"ACC-101", "ACC-102", "AUD-201", "STO-602"})
+        self.assertIn("Found 4 matching products", result["answer"])
+        self.assertIn("product name or SKU", result["answer"])
+        self.assertEqual(
+            query_inventory("What is the value of STO-601?")["answer"],
+            "Current inventory value is $792.00 across 1 product.",
+        )
+
     def test_invalid_inputs(self):
         for question, mode in [("", "demo"), ("a" * 281, "demo"), ("Hello", "other"), (42, "demo")]:
             with self.subTest(question=question, mode=mode):
