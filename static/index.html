@@ -22,7 +22,8 @@
         </select>
       </label>
     </section>
-    <p id="load-error" class="hidden" role="alert"></p>
+    <p id="load-error" class="hidden notice" role="alert"></p>
+    <p id="balance-warning" class="hidden notice" role="status"></p>
     <details class="panel import-panel">
       <summary>Import Excel or CSV from 1C</summary>
       <form id="import-form">
@@ -49,15 +50,15 @@
     <div class="workspace">
       <section class="panel assistant" aria-labelledby="assistant-title">
         <div class="section-head">
-          <div><h2 id="assistant-title">Inventory assistant</h2><p id="mode-help">Local demo with preset routing.</p></div>
+          <div><h2 id="assistant-title">Inventory assistant</h2><p id="mode-help">Stock lookup works without a model.</p></div>
           <label><span class="sr-only">Assistant mode</span>
-            <select id="mode"><option value="demo">Demo</option><option value="ollama">Local LLM</option></select>
+            <select id="mode"><option value="demo">Stock search</option><option value="ollama">Local LLM</option></select>
           </label>
         </div>
         <div class="examples" id="examples" aria-label="Example questions"></div>
         <form id="ask-form">
           <label class="sr-only" for="question">Inventory question</label>
-          <input id="question" placeholder="Ask about stock, reorders or value…" maxlength="280" required>
+          <input id="question" placeholder="Ask in English or choose a SKU below…" maxlength="280" required>
           <button type="submit" id="ask">Ask</button>
         </form>
         <div id="result" role="status" aria-live="polite" class="result">

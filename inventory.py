@@ -68,7 +68,7 @@ def tokens(text):
 
 
 def name_matches(name, product):
-    if re.search(r"[^a-z0-9 -]", product.casefold()):
+    if "'" in product or "’" in product:
         return product.casefold() in name.casefold()
     name_words, product_words = tokens(name), tokens(product)
     width = len(product_words)
@@ -76,6 +76,19 @@ def name_matches(name, product):
         name_words[i:i + width] == product_words
         for i in range(len(name_words) - width + 1)
     )
+
+
+def product_matches(name, subject):
+    if "'" in subject or "’" in subject:
+        return name_matches(name, subject)
+    name_words, subject_words = tokens(name), tokens(subject)
+    if not subject_words:
+        return False
+    # A noun phrase must name the item itself, rather than a modifier:
+    # "laptop" cannot match "Laptop Stand". Common specs can form groups.
+    return (name_words[-len(subject_words):] == subject_words
+            or subject_words[0] in {"usb", "wi", "hdmi", "ssd", "bluetooth"}
+            and name_matches(name, subject))
 
 
 @dataclass(frozen=True)
@@ -101,9 +114,11 @@ class Plan:
 
 
 @lru_cache(maxsize=4)
-def initialize(path, seed=True):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with closing(sqlite3.connect(path)) as db, db:
+def initialize(path, seed=True, *, existing=False):
+    if not existing:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    location = f"{path.as_uri()}?mode=rw" if existing else path
+    with closing(sqlite3.connect(location, uri=existing)) as db, db:
         db.execute("PRAGMA foreign_keys = ON")
         db.execute("BEGIN IMMEDIATE")
         version = db.execute("PRAGMA user_version").fetchone()[0]
@@ -112,7 +127,7 @@ def initialize(path, seed=True):
         if version == 1:
             migrate_stock_status(db)
             return
-        if version != 0:
+        if version != 0 or existing:
             raise sqlite3.DatabaseError(f"Unsupported inventory schema version {version}.")
         # Execute the bundled migration inside the same transaction as its seed.
         for statement in SCHEMA.read_text(encoding="utf-8").split(";"):
@@ -142,10 +157,12 @@ def migrate_stock_status(db):
 
 def connect():
     path = inventory_path()
-    initialize(path, seed=INVENTORY_SOURCE.get() == "sample")
+    sample = INVENTORY_SOURCE.get() == "sample"
+    allow_seed = sample and "STOCKROOM_DB" not in os.environ
+    initialize(path, seed=allow_seed, existing=not allow_seed)
     db = sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True)
     db.row_factory = sqlite3.Row
-    db.create_function("name_matches", 2, name_matches, deterministic=True)
+    db.create_function("product_matches", 2, product_matches, deterministic=True)
     return db
 
 
@@ -162,7 +179,7 @@ def snapshot():
         metrics = dict(db.execute("""
             SELECT COUNT(*) AS products, COALESCE(SUM(stock), 0) AS units,
                    COUNT(CASE WHEN stock < minimum THEN 1 END) AS reorder,
-                   COALESCE(SUM(stock * unit_cents), 0) AS value_cents
+                   COALESCE(SUM(MAX(stock, 0) * unit_cents), 0) AS value_cents
             FROM inventory_status
         """).fetchone())
         categories = [row[0] for row in db.execute("SELECT name FROM categories ORDER BY name")]
@@ -175,8 +192,11 @@ def run_tool(plan):
         where.append("category = ?")
         params.append(plan.category)
     if plan.product:
-        where.append("(name_matches(name, ?) OR lower(sku) = lower(?))")
-        params.extend([plan.product, plan.product])
+        where.append("""(sku = ? COLLATE NOCASE OR (
+            product_matches(name, ?) AND NOT EXISTS (
+                SELECT 1 FROM products WHERE sku = ? COLLATE NOCASE
+            )))""")
+        params.extend([plan.product.upper(), plan.product, plan.product.upper()])
     if plan.tool == "reorder":
         where.append("stock < minimum")
     elif plan.tool == "out_of_stock":
@@ -208,11 +228,14 @@ def answer_from_rows(plan, rows, *, scope_exists=False, currency="USD"):
             return f"1 product needs replenishment. Add {shortage} {units} to reach its reorder point."
         return f"{len(rows)} products need replenishment. Add {shortage} units to reach their reorder points."
     if plan.tool == "valuation":
-        cents = sum(row["stock"] * row["unit_cents"] for row in rows)
+        cents = sum(max(row["stock"], 0) * row["unit_cents"] for row in rows)
         scope = "1 product" if len(rows) == 1 else f"{len(rows)} products"
         amount = f"{cents / 100:,.2f}"
         value = f"${amount}" if currency == "USD" else f"{currency} {amount}"
-        return f"Current inventory value is {value} across {scope}."
+        note = " Negative balances were valued at zero. Check the source records." if any(
+            row["stock"] < 0 for row in rows
+        ) else ""
+        return f"Current inventory value is {value} across {scope}.{note}"
     if plan.tool == "compare":
         highest = rows[0]["stock"]
         if highest <= 0:

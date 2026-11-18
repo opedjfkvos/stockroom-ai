@@ -85,10 +85,17 @@ class ImportTest(TempDatabaseCase):
             with self.assertRaises(HTTPError) as error:
                 upload("confirm")
             error.exception.close()
+            with self.assertRaises(HTTPError) as missing:
+                urlopen(base + "/api/inventory?source=imported", timeout=5)
+            with missing.exception as response:
+                self.assertIn("No imported inventory", json.load(response)["error"])
+            self.assertFalse(self.db_path.with_name("inventory-imported.sqlite3").exists())
             preview = upload("preview")
             upload("confirm", preview["confirmation"])
             with urlopen(base + "/api/inventory?source=imported", timeout=5) as response:
-                self.assertEqual(json.load(response)["currency"], "PLN")
+                inventory = json.load(response)
+                self.assertEqual(inventory["currency"], "PLN")
+                self.assertRegex(inventory["imported_at"], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
             request = Request(base + "/api/ask", data=json.dumps({
                 "question": "What is the stock value for Кофе 250 г?", "source": "imported",
             }).encode(), headers={"Content-Type": "application/json"})

@@ -6,9 +6,15 @@ import re
 from http.client import HTTPException
 from urllib.request import Request, urlopen
 
-from inventory import TOOLS, Plan, answer_from_rows, catalog_scope, name_matches, run_tool, tokens
+from inventory import TOOLS, Plan, answer_from_rows, catalog_scope, name_matches, product_matches, run_tool, tokens
 
 DEFAULT_MODEL = "qwen2.5:1.5b"
+SKU_WITH_LABEL = re.compile(r"\bsku\s+([\w](?:[\w.-]*[\w])?)")
+SKU_WITH_DASH = re.compile(r"\b[a-z][a-z0-9]{0,19}-[0-9][a-z0-9-]*\b")
+WHOLE_STOCK_LOOKUP = re.compile(
+    r"how many (?:units|items)(?: are)? (?:on hand|in stock)"
+    r"(?: (?:across|in) (?:the )?(?:whole |entire )?(?:warehouse|inventory|catalogue|catalog))?[?.]?"
+)
 OUT_OF_SCOPE = (
     "I can check current stock, reorder needs, out-of-stock products, highest stock, "
     "or inventory value. Try asking about one of these."
@@ -17,7 +23,10 @@ UNSUPPORTED_REQUEST = re.compile(
     r"\b(forecast|predict|weather|translate|sales|revenue|historical|yesterday|tomorrow|"
     r"last (?:week|month|year)|next (?:week|month|year)|shipping|delivery fee|"
     r"most expensive|cheapest|lowest stock|least stock|unit price|repair)\b"
-    r"|\b(?:was|were)\b.*\b(?:stock|on hand)\b"
+    r"|\b(?:not|except|excluding|without|if|assuming|as of|previously)\b|n['’]t\b"
+    r"|\b(?:was|were|did)\b"
+    r"|\b(?:last|next|on|since|before|after)\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b"
+    r"|\b(?:in|to)\s+(?:eur|euros?|usd|dollars?|pln|zł|zlotys?|uah|hryvnias?|rub|rubles?)\b"
     r"|\bwill\b.*\b(?:stock|run out|sell out|on hand)\b"
     r"|^(?:please\s+)?(?:add|order|buy|purchase|delete|update|remove|set|change|reduce|deduct|insert|reorder)\b"
     r"|\bwhich category\b"
@@ -28,12 +37,12 @@ CATEGORY_ALIASES = {"network": "Networking"}
 # match the catalogue as a unit; matching a single word would drop qualifiers.
 SCOPE_WORDS = set("""
     a about all an any are available be below by can catalogue catalog check completely
-    count could current currently do doe entire everything for from had has have highest
+    count could current give currently do doe entire everything for from had has have highest
     how i in inventory is item left list low many me minimum more most need of on our
     out please product rank reorder reordering replenish replenishment should show
     sold stock tell than the there total unit value valuation we what whether which
     whole with worth you across warehouse buy much now today running hand tied up
-    money into every at to between biggest pile sku
+    money into every at to between biggest pile sku update point
 """.split())
 REORDER_INTENT = re.compile(
     r"\b(reorder(?:ing)?|replenish(?:ment)?|low stock|below (?:the )?(?:minimum|reorder point)|"
@@ -93,8 +102,8 @@ def question_scope(question, products, categories):
     if re.search(r"\b(?:and|or)\b", question):
         raise UnsupportedQuestion("Ask about one product or category at a time.")
 
-    sku_mentions = re.findall(r"\b[a-z][a-z0-9]{0,19}-[0-9][a-z0-9-]*\b", question)
-    sku_mentions.extend(re.findall(r"\bsku\s+([\w.-]+)", question))
+    sku_mentions = SKU_WITH_LABEL.findall(question)
+    sku_mentions.extend(SKU_WITH_DASH.findall(SKU_WITH_LABEL.sub("", question)))
     sku_mentions = list(dict.fromkeys(sku_mentions))
     if len(set(sku_mentions)) > 1:
         raise UnsupportedQuestion("Ask about one product or category at a time.")
@@ -102,6 +111,18 @@ def question_scope(question, products, categories):
     # These complete phrases refer to the catalogue, not to a product.
     question = re.sub(r"\beverything on (?:the )?shelves\b", "everything", question)
     words = tokens(question)
+    full_subject = tuple(word for word in words if word not in SCOPE_WORDS)
+    exact = [sku for sku, name in products if full_subject == tokens(name)]
+    if len(exact) == 1 and not sku_mentions:
+        return "", exact[0]
+
+    # "In storage" is ordinary warehouse wording when a product precedes it.
+    # "Storage category" remains available for an explicit category filter.
+    if words[-2:] == ("in", "storage") and any(
+        word not in SCOPE_WORDS for word in words[:-2]
+    ):
+        words = words[:-2]
+
     category_words = set()
     found_categories = set()
     for name in categories:
@@ -126,12 +147,6 @@ def question_scope(question, products, categories):
             raise UnsupportedQuestion("Use a product name or SKU from the catalogue.")
         return category, sku_mentions[0].upper()
 
-    # A full product name takes precedence over interpretation as a category.
-    full_subject = tuple(word for word in words if word not in SCOPE_WORDS)
-    exact = [sku for sku, name in products if full_subject == tokens(name)]
-    if len(exact) == 1:
-        return "", exact[0]
-
     subject = tuple(word for index, word in enumerate(words)
                     if index not in category_words and word not in SCOPE_WORDS)
     if not subject:
@@ -139,7 +154,7 @@ def question_scope(question, products, categories):
     keyword = " ".join(subject)
     if len(keyword) > 100:
         raise UnsupportedQuestion(OUT_OF_SCOPE)
-    matching = [sku for sku, name in products if name_matches(name, keyword)]
+    matching = [sku for sku, name in products if product_matches(name, keyword)]
     if not matching:
         message = "Use a product name or SKU from the catalogue." if any(
             name_matches(name, word) for _, name in products for word in subject
@@ -172,7 +187,8 @@ def demo_plan(normalized, category, product, categories):
             r"(?:show|list) (?:me )?(?:the |all )?(?:current )?(?:inventory|products|items|stock)[?.]?",
             normalized,
         )
-        if not (catalogue_request or lookup_intent and (product or category)):
+        if not (catalogue_request or WHOLE_STOCK_LOOKUP.fullmatch(normalized)
+                or lookup_intent and (product or category)):
             raise UnsupportedQuestion(OUT_OF_SCOPE)
     return Plan(tool, category, product, allowed_categories=categories)
 
@@ -233,13 +249,32 @@ def plan_question(question, mode, model):
         if not re.search(r"\b(?:everything|entire (?:inventory|stock|warehouse)|whole warehouse|total (?:inventory|stock) value)\b",
                          normalized):
             raise UnsupportedQuestion("Specify a product, category, or the entire inventory.")
-    tool = "reorder" if REORDER_INTENT.search(normalized) else proposed.tool
-    return Plan(tool, category, product, allowed_categories=categories)
+    # Use recognizable intent for execution. If the model understands a
+    # paraphrase the checks cannot verify, offer a supported way to rephrase.
+    try:
+        return demo_plan(normalized, category, product, categories)
+    except UnsupportedQuestion as exc:
+        if not (product or category):
+            raise
+        suggestion = dict(zip(TOOLS, (
+            "How many units are on hand?",
+            "What needs reordering?",
+            "Which products are out of stock?",
+            "Which products have the most stock?",
+            "What is the current inventory value?",
+        )))[proposed.tool]
+        raise UnsupportedQuestion(
+            f'Could not verify the requested operation. Try "{suggestion}" with the product SKU or category.'
+        ) from exc
 
 
 def query_inventory(question, mode="demo", *, currency="USD"):
     model = os.environ.get("STOCKROOM_MODEL", DEFAULT_MODEL)
     plan = plan_question(question, mode, model)
+    if plan.category and plan.product and not run_tool(
+        Plan("lookup", category=plan.category, product=plan.product, allowed_categories=None)
+    ):
+        raise UnsupportedQuestion("The requested product does not match that category. Check the category or ask by SKU.")
     rows = run_tool(plan)
     scope_exists = (
         not rows and plan.tool in {"reorder", "out_of_stock"}

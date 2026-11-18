@@ -10,7 +10,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from assistant import EXAMPLES, ModelUnavailable, query_inventory
 from inventory import snapshot, use_inventory
-from inventory_import import MAX_BYTES, import_inventory, state
+from inventory_import import MAX_BYTES, import_inventory, latest_import
 
 STATIC = Path(__file__).resolve().parent / "static"
 ASSETS = {
@@ -34,21 +34,33 @@ class Handler(BaseHTTPRequestHandler):
     def json_response(self, status, data):
         self.respond(status, json.dumps(data).encode(), "application/json; charset=utf-8")
 
+    def local_host(self):
+        host = self.headers.get("Host", "").split(":", 1)[0].lower()
+        if host in {"127.0.0.1", "localhost"}:
+            return True
+        self.json_response(HTTPStatus.FORBIDDEN, {"error": "Open Stockroom AI on localhost."})
+        return False
+
     def do_GET(self):
+        if not self.local_host():
+            return
         route = urlsplit(self.path)
         path = route.path
         if path == "/api/inventory":
             source = parse_qs(route.query).get("source", ["sample"])[0]
             try:
                 with use_inventory(source):
+                    currency, imported_at = latest_import() if source == "imported" else ("USD", None)
+                    if source == "imported" and not currency:
+                        raise ValueError("No imported inventory is available. Choose a stock file and confirm the import.")
                     inventory = snapshot()
-                    currency = state()[1] if source == "imported" else "USD"
             except ValueError as exc:
                 self.json_response(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
             except sqlite3.Error as exc:
                 self.database_error(exc)
             else:
-                self.json_response(HTTPStatus.OK, {**inventory, "examples": EXAMPLES, "currency": currency})
+                self.json_response(HTTPStatus.OK, {**inventory, "examples": EXAMPLES, "currency": currency,
+                                                   "imported_at": imported_at})
         elif path == "/one-c-stock.csv":
             template = STATIC.parent / "examples" / "one-c-stock.csv"
             self.respond(HTTPStatus.OK, b"\xef\xbb\xbf" + template.read_bytes(), "text/csv; charset=utf-8")
@@ -59,6 +71,8 @@ class Handler(BaseHTTPRequestHandler):
             self.json_response(HTTPStatus.NOT_FOUND, {"error": "Page not found."})
 
     def do_POST(self):
+        if not self.local_host():
+            return
         route = urlsplit(self.path)
         if route.path not in ("/api/ask", "/api/import/preview", "/api/import/confirm"):
             self.json_response(HTTPStatus.NOT_FOUND, {"error": "Endpoint not found."})
@@ -70,7 +84,7 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError("Send a JSON object.")
                 source = payload.get("source", "sample")
                 with use_inventory(source):
-                    currency = state()[1] if source == "imported" else "USD"
+                    currency = latest_import()[0] if source == "imported" else "USD"
                     if not currency:
                         raise ValueError("Import a spreadsheet before asking about imported inventory.")
                     result = query_inventory(payload.get("question"), payload.get("mode", "demo"),
@@ -93,9 +107,6 @@ class Handler(BaseHTTPRequestHandler):
         return self.rfile.read(size)
 
     def handle_import(self, route):
-        host = self.headers.get("Host", "").split(":", 1)[0].lower()
-        if host not in {"127.0.0.1", "localhost"}:
-            raise ValueError("Inventory imports are available on localhost.")
         if self.headers.get("X-Stockroom-Import") != "1":
             raise ValueError("Use the Stockroom import form.")
         data = self.read_body(MAX_BYTES, "application/octet-stream")

@@ -41,7 +41,14 @@ function renderRows() {
   }
   for (const row of filtered) {
     const product = tag("td", row.name, "product");
-    product.append(tag("span", row.sku, "sku"));
+    const sku = tag("button", row.sku, "sku sku-link");
+    sku.type = "button";
+    sku.setAttribute("aria-label", 'Ask about ' + row.name + ' (' + row.sku + ')');
+    sku.addEventListener("click", () => {
+      question.value = 'What about SKU ' + row.sku + '?';
+      question.focus();
+    });
+    product.append(sku);
     const statusCell = tag("td");
     const className = row.status === "Healthy" ? "status" : row.stock > 0 ? "status low" : "status out";
     statusCell.append(tag("span", row.status, className));
@@ -85,7 +92,16 @@ async function refreshInventory() {
     currency = new Intl.NumberFormat("en-US", { style: "currency", currency: data.currency || "USD" });
     const label = source === "imported" ? "Imported inventory" : "Sample inventory";
     element("inventory-label").textContent = data.currency ? `${label} · ${data.currency}` : label;
+    if (data.imported_at) {
+      element("inventory-label").textContent += ' · Imported ' + new Date(data.imported_at).toLocaleString();
+    }
     rows.splice(0, rows.length, ...data.rows);
+    const negatives = rows.filter((row) => row.stock < 0).length;
+    const warning = element("balance-warning");
+    warning.classList.toggle("hidden", !negatives);
+    warning.textContent = negatives
+      ? negatives + ' product(s) have negative stock. Check the source data. Negative balances are valued at zero.'
+      : "";
     element("load-error").className = "hidden";
     element("load-error").textContent = "";
     element("metric-products").textContent = data.metrics.products;
@@ -110,10 +126,14 @@ async function refreshInventory() {
     }
     renderBars(data.categories);
     renderRows();
+    return true;
   } catch (error) {
     if (request !== refreshRequest) return;
-    element("load-error").className = "error";
-    element("load-error").textContent = `Could not refresh the inventory. Displayed data may be out of date. ${error.message}`;
+    clearInventory();
+    element("inventory-label").textContent = "Inventory unavailable";
+    element("load-error").className = "error notice";
+    element("load-error").textContent = error.message;
+    return false;
   }
 }
 
@@ -143,8 +163,9 @@ element("ask-form").addEventListener("submit", async (event) => {
       body: JSON.stringify({ question: question.value, mode: selectedMode, source: selectedSource }),
     });
     if (selectedSource === sourcePicker.value) {
-      await refreshInventory();
-      if (selectedSource === sourcePicker.value) renderAnswer(data);
+      const current = await refreshInventory();
+      if (current && selectedSource === sourcePicker.value) renderAnswer(data);
+      else result.replaceChildren(tag("p", "Inventory unavailable. Please check the source.", "error"));
     }
   } catch (error) {
     result.replaceChildren(tag("p", error.message, "error"));
@@ -155,8 +176,8 @@ element("ask-form").addEventListener("submit", async (event) => {
 
 mode.addEventListener("change", () => {
   element("mode-help").textContent = mode.value === "demo"
-    ? "Local demo with preset routing."
-    : "Uses Ollama on this computer to select a tool.";
+    ? "Stock lookup works without a model."
+    : "Uses local Ollama with verified catalogue filters.";
   result.replaceChildren(tag("p", "Ask a question to see the answer and the records behind it."));
 });
 element("filter").addEventListener("input", renderRows);
@@ -165,12 +186,19 @@ element("stock").addEventListener("change", renderRows);
 function switchInventory() {
   localStorage.setItem("stockroom-inventory-source", sourcePicker.value);
   element("inventory-label").textContent = sourcePicker.value === "sample" ? "Sample inventory" : "Imported inventory";
+  clearInventory();
+  result.replaceChildren(tag("p", "Ask a question about the selected inventory."));
+  return refreshInventory();
+}
+
+function clearInventory() {
   rows.length = 0;
+  element("balance-warning").classList.add("hidden");
+  element("examples").replaceChildren();
+  element("category").replaceChildren(new Option("All categories", ""));
   for (const metric of ["products", "units", "reorder", "value"]) element(`metric-${metric}`).textContent = "—";
   element("bars").replaceChildren();
   renderRows();
-  result.replaceChildren(tag("p", "Ask a question about the selected inventory."));
-  return refreshInventory();
 }
 
 sourcePicker.addEventListener("change", switchInventory);
