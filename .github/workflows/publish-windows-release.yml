@@ -1,0 +1,38 @@
+name: Publish Windows release
+on:
+  push:
+    branches: [portfolio-verification]
+    paths: [.github/workflows/publish-windows-release.yml]
+permissions:
+  actions: read
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Verify and publish the tested Windows build
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api "repos/$GH_REPO/actions/artifacts/14457934891/zip" > StockroomAI-Windows.zip
+          sha256sum -c <<< 'bcfcd76202d6d6374a8e1dd974b14130b5c9e41f640ec3ed7c0c85232f379af3  StockroomAI-Windows.zip'
+          unzip -t StockroomAI-Windows.zip
+          cat > release-notes.md <<'NOTES'
+          ## Windows download
+
+          Download **StockroomAI-Windows.zip** from **Assets**, extract it, then double-click **StockroomAI.exe**. The launcher opens the dashboard in your default browser. Keep the launcher open while using it.
+
+          - Choose **Import Excel or CSV from 1C** to load an Excel or CSV export.
+          - **Stock search** works out of the box. No separate Python installation is needed.
+          - **Local LLM** uses an existing Ollama installation with an installed model. Use **Start local AI** in the launcher to start Ollama.
+
+          This is an unsigned Windows build. The executable passed an automated Windows check covering the dashboard, Excel import and exact SKU lookup.
+
+          [Windows build and verification](https://github.com/opedjfkvos/stockroom-ai/actions/runs/44372024705)
+          NOTES
+          gh release create v0.1.0 StockroomAI-Windows.zip --target 6bee1b04e438465bbc042c48aaedfeeaf4ab21f8 --title 'Stockroom AI 0.1.0' --notes-file release-notes.md --latest
+          gh release view v0.1.0 --json url,tagName,isDraft,isLatest,assets
