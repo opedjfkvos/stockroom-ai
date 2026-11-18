@@ -1,7 +1,7 @@
 """Sample data and the read-only inventory tools available to the assistant."""
 
 from contextlib import closing
-from dataclasses import asdict, dataclass
+from dataclasses import InitVar, asdict, dataclass
 import os
 from pathlib import Path
 import re
@@ -59,10 +59,14 @@ class Plan:
     category: str = ""
     product: str = ""
 
-    def __post_init__(self):
+    allowed_categories: InitVar[tuple | None] = CATEGORIES
+
+    def __post_init__(self, allowed_categories):
         if self.tool not in TOOLS:
             raise ValueError("Choose one of the available tools.")
-        if not isinstance(self.category, str) or (self.category and self.category not in CATEGORIES):
+        if not isinstance(self.category, str) or len(self.category) > 100 or (
+            allowed_categories is not None and self.category and self.category not in allowed_categories
+        ):
             raise ValueError("Unknown inventory category.")
         if not isinstance(self.product, str) or len(self.product) > 100:
             raise ValueError("Invalid product search.")
@@ -78,10 +82,13 @@ def initialize(path):
         db.execute("PRAGMA foreign_keys = ON")
         db.execute("BEGIN IMMEDIATE")
         version = db.execute("PRAGMA user_version").fetchone()[0]
+        if version == 2:
+            return
         if version == 1:
+            migrate_stock_status(db)
             return
         if version != 0:
-            raise RuntimeError(f"Unsupported inventory schema version {version}.")
+            raise sqlite3.DatabaseError(f"Unsupported inventory schema version {version}.")
         # Execute the bundled migration inside the same transaction as its seed.
         for statement in SCHEMA.read_text(encoding="utf-8").split(";"):
             if statement.strip():
@@ -96,7 +103,15 @@ def initialize(path):
             "INSERT INTO stock_movements(sku, quantity_delta, reason) VALUES (?, ?, ?)",
             ((sku, stock, "Opening balance") for sku, _, _, stock, _, _ in ITEMS if stock),
         )
-        db.execute("PRAGMA user_version = 1")
+        migrate_stock_status(db)
+
+
+def migrate_stock_status(db):
+    migration = SCHEMA.with_name("002_stock_status.sql")
+    for statement in migration.read_text(encoding="utf-8").split(";"):
+        if statement.strip():
+            db.execute(statement)
+    db.execute("PRAGMA user_version = 2")
 
 
 def connect():
@@ -106,6 +121,13 @@ def connect():
     db.row_factory = sqlite3.Row
     db.create_function("name_matches", 2, name_matches, deterministic=True)
     return db
+
+
+def catalog_scope():
+    with closing(connect()) as db:
+        products = tuple((row["sku"], row["name"]) for row in db.execute("SELECT sku, name FROM products"))
+        categories = tuple(row["name"] for row in db.execute("SELECT name FROM categories"))
+    return products, categories
 
 
 def snapshot():
@@ -132,7 +154,7 @@ def run_tool(plan):
     if plan.tool == "reorder":
         where.append("stock < minimum")
     elif plan.tool == "out_of_stock":
-        where.append("stock = 0")
+        where.append("stock <= 0")
 
     query = BASE_QUERY
     if where:
@@ -145,7 +167,7 @@ def run_tool(plan):
 
 def answer_from_rows(plan, rows, *, scope_exists=False):
     if not rows:
-        if scope_exists or not plan.product:
+        if scope_exists:
             if plan.tool == "reorder":
                 return "No products below their reorder point in this scope."
             if plan.tool == "out_of_stock":
@@ -164,12 +186,18 @@ def answer_from_rows(plan, rows, *, scope_exists=False):
         scope = "1 product" if len(rows) == 1 else f"{len(rows)} products"
         return f"Current inventory value is ${cents / 100:,.2f} across {scope}."
     if plan.tool == "compare":
-        highest = rows[0]
-        return f"{highest['name']} has the most stock in this result, with {highest['stock']} units."
+        highest = rows[0]["stock"]
+        if highest <= 0:
+            return "All matching products are currently out of stock."
+        leaders = [row["name"] for row in rows if row["stock"] == highest]
+        if len(leaders) > 1:
+            return f"{', '.join(leaders)} are tied for the most stock, with {highest} units each."
+        return f"{leaders[0]} has the most stock in this result, with {highest} units."
     if len(rows) == 1:
         row = rows[0]
         return f"{row['name']} has {row['stock']} units in stock. Reorder point: {row['minimum']}."
-    if plan.product:
-        return f"Found {len(rows)} matching products. Use a product name or SKU to narrow the search."
     units = sum(row["stock"] for row in rows)
-    return f"Found {len(rows)} matching products with {units} units in stock."
+    answer = f"Found {len(rows)} matching products with {units} units in stock."
+    if plan.product:
+        answer += " Use a product name or SKU to narrow the search."
+    return answer

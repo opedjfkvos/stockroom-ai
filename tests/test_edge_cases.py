@@ -111,6 +111,26 @@ class StockBoundaryTest(TempDatabaseCase):
         self.assertEqual(self.skus("out_of_stock", category="Audio"), [])
         self.assertEqual(self.skus("lookup", category="Audio", product="STO-601"), [])
 
+    def test_compare_reports_ties_and_zero_stock(self):
+        self.adjust("DSP-301", 7)
+        question = "Which Displays product has the highest stock?"
+        answer = query_inventory(question)["answer"]
+        self.assertIn("27-inch Monitor", answer)
+        self.assertIn("Portable Monitor", answer)
+        self.assertIn("7 units each", answer)
+        self.adjust("DSP-301", -8)
+        self.adjust("DSP-302", -7)
+        self.assertIn("All matching products", query_inventory(question)["answer"])
+        self.assertEqual(self.skus("out_of_stock", category="Displays"), ["DSP-302", "DSP-301"])
+        self.assertEqual(next(row for row in snapshot()["rows"] if row["sku"] == "DSP-301")["status"],
+                         "Out of stock")
+
+    def test_empty_catalogue_is_not_reported_as_healthy_stock(self):
+        self.write("DELETE FROM stock_movements")
+        self.write("DELETE FROM products")
+        self.assertEqual(query_inventory("What needs reordering?")["answer"],
+                         "No inventory records match that request.")
+
 
 class PlanValidationTest(unittest.TestCase):
     def test_rejects_bad_plans(self):
@@ -204,6 +224,64 @@ class DemoRoutingEdgeCasesTest(TempDatabaseCase):
                 with self.assertRaisesRegex(UnsupportedQuestion, "product name or SKU"):
                     query_inventory(question)
 
+    def test_reviewed_questions_keep_exact_scope(self):
+        for question, expected in (
+            ("Do we need to reorder 27-inch Monitors?", Plan("reorder", product="DSP-301")),
+            ("Should we reorder 64 GB USB Drives?", Plan("reorder", product="STO-602")),
+            ("Do we need to reorder 1 TB Portable SSDs?", Plan("reorder", product="STO-601")),
+            ("What monitors are out of stock?", Plan("out_of_stock", product="monitor")),
+            ("How many available Wireless Mice do we have?", Plan("lookup", product="PER-502")),
+            ("What is our webcam stock?", Plan("lookup", product="PER-503")),
+            ("How many units of PER-999 are in stock?", Plan("lookup", product="PER-999")),
+            ("What is the total inventory value of Networking?", Plan("valuation", "Networking")),
+            ("What should we buy more of?", Plan("reorder")),
+        ):
+            proposed = Plan("compare") if expected.tool == "reorder" else Plan(expected.tool, "Audio")
+            for mode in ("demo", "ollama"):
+                with self.subTest(question=question, mode=mode):
+                    with patch("assistant.ollama_plan", return_value=proposed):
+                        result = query_inventory(question, mode)
+                    self.assertEqual(result["plan"], expected.to_dict())
+
+    def test_unknown_subjects_and_unsupported_operations_do_not_run_reports(self):
+        for question in (
+            "Do we have any cables for iPhones?",
+            "Do we have a stand for the microphone?",
+            "Do we have an adapter for HDMI?",
+            "Is the Docking Station out of stock?",
+            "Does the Desk Lamp in Accessories need reordering?",
+            "Are all thumb drives out of stock?",
+            "Which Peripherals product has the lowest stock?",
+            "Which category has the most stock across the whole warehouse?",
+            "How many units of the Wi-Fi Router were in stock on Monday?",
+            "How many USB-C Hubs will be in stock in 3 days?",
+            "Reduce the stock of NET-402 by 5 units.",
+            "How much is a 1080p Webcam worth?",
+        ):
+            for mode in ("demo", "ollama"):
+                with self.subTest(question=question, mode=mode):
+                    with patch("assistant.ollama_plan", return_value=Plan("out_of_stock", "Accessories")):
+                        with patch("assistant.run_tool") as run:
+                            with self.assertRaises(UnsupportedQuestion):
+                                query_inventory(question, mode)
+                            run.assert_not_called()
+
+    def test_new_products_and_categories_are_available_in_both_modes(self):
+        self.write("INSERT INTO categories (name) VALUES (?)", ("Store Supplies",))
+        self.write(
+            "INSERT INTO products VALUES (?, ?, (SELECT id FROM categories WHERE name = ?), ?, ?)",
+            ("SUP-199", "Cable Tidy", "Store Supplies", 5, 500),
+        )
+        with patch("assistant.ollama_plan", return_value=Plan("reorder")):
+            for mode in ("demo", "ollama"):
+                with self.subTest(mode=mode):
+                    product = query_inventory("Does Cable Tidy need reordering?", mode)
+                    category = query_inventory("What needs reordering in Store Supplies?", mode)
+                    self.assertEqual(product["plan"]["product"], "SUP-199")
+                    self.assertEqual(category["plan"]["category"], "Store Supplies")
+                    self.assertEqual([row["sku"] for row in category["rows"]], ["SUP-199"])
+                    self.assertIn("Add 5 units", product["answer"])
+
 
 class OllamaFailureModesTest(unittest.TestCase):
     def assert_unavailable(self, body):
@@ -219,7 +297,7 @@ class OllamaFailureModesTest(unittest.TestCase):
             "content is prose": json.dumps({"message": {"content": "Sure! Here you go"}}).encode(),
             "extra key": plan_reply({**good, "sql": "DROP TABLE products"}),
             "missing key": plan_reply({"tool": "lookup"}),
-            "unknown category": plan_reply({**good, "category": "Toys"}),
+            "non-string category": plan_reply({**good, "category": ["Toys"]}),
             "plan is a list": plan_reply([good]),
             "oversized product": plan_reply({**good, "product": "x" * 101}),
             "response too large": b"x" * 256_001,
