@@ -5,6 +5,8 @@
 Stockroom AI is an AI-assisted portfolio prototype for answering questions about a sample inventory. It includes a browser dashboard, a Python API and a SQLite database. The dashboard opens in Demo mode with no model downloads, API keys, or third-party Python packages.
 
 
+![Stockroom AI dashboard with the reorder result and supporting inventory records](docs/dashboard.png)
+
 ## Run locally
 
 Use Python 3.10 or newer.
@@ -51,9 +53,17 @@ python model_eval.py --model qwen2.5:1.5b --holdout
 | --- | ---: | ---: | ---: | ---: | ---: |
 | Demo, smoke | 18/18 | 14/14 | 14/14 | 4/4 | 0/14 |
 | Demo, partly tuned diagnostic | 8/12 | 3/7 | 3/7 | 5/5 | 4/7 |
-| qwen2.5:1.5b | Pending | — | — | — | — |
+| qwen2.5:1.5b, diagnostic | 2/12 | 5/7 | 2/7 | 0/5 | 0/7 |
 
 Tool and filter accuracy use all supported questions as their denominator. A refusal scores zero on both. Filters are scored independently of the tool, and product keywords are equivalent if they match the same sample SKUs. The live command sends prompts directly to Ollama so it measures the model's choices, including requests the app can reject before contacting the model. See [model_eval.py](model_eval.py) for the questions and scoring rules.
+
+In the [Ollama run on 18 November 2026](https://github.com/opedjfkvos/stockroom-ai/actions/runs/44352150255), Qwen (model ID `65ec06548149`) produced valid plans but often guessed the scope or selected a tool for an unsupported request. Examples:
+
+| Question | Model output | Expected behavior |
+| --- | --- | --- |
+| What should we buy more of? | Compared keyboards in Peripherals | Reorder report for the whole catalogue |
+| How much money is tied up in everything on the shelves? | Valued only Audio | Value the whole catalogue |
+| Tell me what to charge for shipping a webcam. | Looked up webcam stock | Decline. The database has no shipping rates |
 
 ## How a question is answered
 

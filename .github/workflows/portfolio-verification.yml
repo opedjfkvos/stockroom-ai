@@ -7,21 +7,23 @@ permissions:
 jobs:
   ollama:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Start Ollama and fetch Qwen
+      - name: Start Ollama
         run: |
           docker run -d --name ollama -e OLLAMA_HOST=0.0.0.0:11434 -p 127.0.0.1:11434:11434 ollama/ollama
           curl --fail --retry 25 --retry-all-errors --retry-delay 2 http://127.0.0.1:11434/api/tags
           docker exec ollama ollama pull qwen2.5:1.5b
           docker exec ollama ollama run qwen2.5:1.5b "Say ready."
           docker exec ollama ollama list
-      - name: Score the diagnostic suite
-        run: python model_eval.py --model qwen2.5:1.5b --holdout
-      - name: Show Ollama startup logs if the job fails
+      - name: Compare raw model with application routing
+        run: |
+          python model_eval.py --model qwen2.5:1.5b --holdout
+          python model_eval.py --model qwen2.5:1.5b --holdout --app
+      - name: Ollama logs on failure
         if: failure()
         run: docker logs ollama

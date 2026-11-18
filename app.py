@@ -5,6 +5,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
+import sqlite3
 from urllib.parse import urlsplit
 
 from assistant import EXAMPLES, ModelUnavailable, query_inventory
@@ -35,7 +36,12 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = urlsplit(self.path).path
         if path == "/api/inventory":
-            self.json_response(HTTPStatus.OK, {**snapshot(), "examples": EXAMPLES})
+            try:
+                inventory = snapshot()
+            except sqlite3.Error as exc:
+                self.database_error(exc)
+            else:
+                self.json_response(HTTPStatus.OK, {**inventory, "examples": EXAMPLES})
         elif path in ASSETS:
             filename, mime = ASSETS[path]
             self.respond(HTTPStatus.OK, (STATIC / filename).read_bytes(), mime)
@@ -56,10 +62,16 @@ class Handler(BaseHTTPRequestHandler):
             result = query_inventory(payload.get("question"), payload.get("mode", "demo"))
         except ValueError as exc:
             self.json_response(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+        except sqlite3.Error as exc:
+            self.database_error(exc)
         except ModelUnavailable as exc:
             self.json_response(HTTPStatus.SERVICE_UNAVAILABLE, {"error": str(exc)})
         else:
             self.json_response(HTTPStatus.OK, result)
+
+    def database_error(self, exc):
+        self.log_error("SQLite inventory error: %s", exc)
+        self.json_response(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "The inventory database is unavailable."})
 
 
 def main():
