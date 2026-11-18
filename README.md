@@ -38,12 +38,20 @@ python model_eval.py --demo
 python model_eval.py --model qwen2.5:1.5b
 ```
 
-The 18 labeled prompts check tool selection, category and product filters, and refusal of unsupported requests. The live-model command sends each prompt directly to Ollama to measure the model's routing, including cases the app normally rejects before contacting the model. The Demo command checks the deterministic planner with the app's scope checks. The dataset and scoring rules are in [model_eval.py](model_eval.py).
+The small 18-question smoke suite checks the documented Demo behavior in CI. A separate 12-question suite adds unfamiliar phrasings of supported requests and out-of-scope requests. The wording of the Demo rules was left unchanged for this follow-up. The separate suite is diagnostic and does not gate CI.
 
-| Router | Result |
-| --- | --- |
-| Demo | 18 / 18 on the labeled suite |
-| qwen2.5:1.5b | Awaiting a run against a local Ollama instance |
+```sh
+python model_eval.py --demo --holdout
+python model_eval.py --model qwen2.5:1.5b --holdout
+```
+
+| Run | Exact plans | Correct tools | Correct filters | Correct refusals | Incorrect refusals on supported requests |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Demo, smoke | 18/18 | 14/14 | 14/14 | 4/4 | 0/14 |
+| Demo, separate suite | 6/12 | 1/7 | 2/7 | 5/5 | 5/7 |
+| qwen2.5:1.5b | Pending | — | — | — | — |
+
+Tool and filter accuracy use all supported questions as their denominator. A refusal scores zero on both. Filters are scored independently of the tool, and product keywords are equivalent if they match the same sample SKUs. The live command sends prompts directly to Ollama so it measures the model's choices, including requests the app can reject before contacting the model. See [model_eval.py](model_eval.py) for the questions and scoring rules.
 
 ## How a question is answered
 

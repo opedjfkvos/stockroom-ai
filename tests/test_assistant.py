@@ -78,12 +78,19 @@ class AssistantTest(unittest.TestCase):
                     query_inventory(question)
 
     def test_out_of_scope_model_does_not_query_inventory(self):
-        with model_stub({"tool": "unsupported", "category": "", "product": ""}) as (endpoint, _):
-            self.assertIsNone(ollama_plan("Tell me a joke", "test-model", endpoint))
-        with patch("assistant.ollama_plan", return_value=None), patch("assistant.run_tool") as tool:
-            with self.assertRaises(UnsupportedQuestion):
-                query_inventory("Tell me a joke", "ollama")
-            tool.assert_not_called()
+        refusal = {"tool": "unsupported", "category": "", "product": ""}
+        with model_stub(refusal) as (endpoint, received):
+            def route_to_stub(question, model):
+                return ollama_plan(question, model, endpoint)
+
+            with patch("assistant.ollama_plan", side_effect=route_to_stub):
+                with patch("inventory.connect") as connect, patch("assistant.run_tool") as tool:
+                    tool.side_effect = run_tool
+                    with self.assertRaises(UnsupportedQuestion):
+                        query_inventory("Tell me a joke", "ollama")
+                    tool.assert_not_called()
+                    connect.assert_not_called()
+            self.assertEqual(len(received), 1)
         with patch("assistant.ollama_plan") as model:
             with self.assertRaises(UnsupportedQuestion):
                 query_inventory("Update stock for PER-503", "ollama")

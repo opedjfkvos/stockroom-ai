@@ -6,7 +6,7 @@ import sys
 from assistant import DEFAULT_MODEL, ModelUnavailable, UnsupportedQuestion, ollama_plan, plan_question
 from inventory import ITEMS, Plan
 
-CASES = (
+SMOKE_CASES = (
     ("What needs reordering?", Plan("reorder")),
     ("Which Audio products are below minimum?", Plan("reorder", "Audio")),
     ("Any low stock in Networking?", Plan("reorder", "Networking")),
@@ -25,6 +25,22 @@ CASES = (
     ("What is the value of pi?", None),
     ("Delete PER-503 from inventory.", None),
     ("How much stock did we have yesterday?", None),
+)
+
+
+HOLDOUT_CASES = (
+    ("What should we buy more of?", Plan("reorder")),
+    ("Which items are running low in Audio?", Plan("reorder", "Audio")),
+    ("Are any monitors completely sold out?", Plan("out_of_stock", product="monitor")),
+    ("Between the accessories, what do we have the biggest pile of?", Plan("compare", "Accessories")),
+    ("How much money is tied up in everything on the shelves?", Plan("valuation")),
+    ("Could you check whether there are any webcams left?", Plan("lookup", product="PER-503")),
+    ("How many units of the Ethernet Adapter are on hand?", Plan("lookup", product="NET-402")),
+    ("Tell me what to charge for shipping a webcam.", None),
+    ("What's the most expensive product we sell?", None),
+    ("Will we run out of mice by Friday?", None),
+    ("How many keyboards did we have last month?", None),
+    ("Set the available USB Headsets to zero.", None),
 )
 
 
@@ -49,9 +65,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--demo", action="store_true", help="Evaluate the deterministic router.")
     parser.add_argument("--model", default=DEFAULT_MODEL)
+    parser.add_argument("--holdout", action="store_true", help="Use the separate paraphrase and scope suite.")
     args = parser.parse_args()
+    cases = HOLDOUT_CASES if args.holdout else SMOKE_CASES
     correct = 0
-    for question, expected in CASES:
+    supported = tool_hits = filter_hits = refused_supported = unsupported = refusal_hits = 0
+    for question, expected in cases:
         try:
             actual = plan_question(question, "demo", args.model) if args.demo else ollama_plan(question, args.model)
         except UnsupportedQuestion:
@@ -59,13 +78,28 @@ def main():
         except ModelUnavailable as exc:
             print(f"Evaluation stopped at {question!r}\n{exc}", file=sys.stderr)
             return 2
+        if expected is None:
+            unsupported += 1
+            refusal_hits += actual is None
+        else:
+            supported += 1
+            refused_supported += actual is None
+            tool_hits += actual is not None and actual.tool == expected.tool
+            filter_hits += (
+                actual is not None and actual.category == expected.category
+                and product_scope(actual.product) == product_scope(expected.product)
+            )
         ok = matches(actual, expected)
         correct += ok
         print(f"{'PASS' if ok else 'MISS'}  {question}")
         if not ok:
             print(f"      expected {expected!r}\n      received {actual!r}")
-    print(f"\n{'Demo' if args.demo else args.model}: {correct}/{len(CASES)}")
-    return int(correct != len(CASES))
+    print(f"\n{'Demo' if args.demo else args.model}: {correct}/{len(cases)}")
+    print(f"Tool accuracy on supported questions: {tool_hits}/{supported}")
+    print(f"Filter accuracy on supported questions: {filter_hits}/{supported}")
+    print(f"Correct refusals: {refusal_hits}/{unsupported}")
+    print(f"Incorrect refusals on supported questions: {refused_supported}/{supported}")
+    return int(not args.holdout and correct != len(cases))
 
 
 if __name__ == "__main__":
