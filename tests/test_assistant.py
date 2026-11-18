@@ -5,8 +5,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from threading import Thread
 import unittest
+from unittest.mock import patch
 
-from assistant import ModelUnavailable, ollama_plan, query_inventory
+from assistant import ModelUnavailable, UnsupportedQuestion, ollama_plan, query_inventory
 from inventory import Plan, run_tool, snapshot
 
 
@@ -65,6 +66,28 @@ class AssistantTest(unittest.TestCase):
             with self.subTest(question=question, mode=mode):
                 with self.assertRaises(ValueError):
                     query_inventory(question, mode)
+
+    def test_out_of_scope_demo(self):
+        for question in (
+            "Hello", "How many products did we sell?", "How do I repair a USB Headset?",
+            "Which product has the highest price?", "What is the value of pi?",
+            "Show stock from yesterday",
+        ):
+            with self.subTest(question=question):
+                with self.assertRaisesRegex(UnsupportedQuestion, "I can check current stock"):
+                    query_inventory(question)
+
+    def test_out_of_scope_model_does_not_query_inventory(self):
+        with model_stub({"tool": "unsupported", "category": "", "product": ""}) as (endpoint, _):
+            self.assertIsNone(ollama_plan("Tell me a joke", "test-model", endpoint))
+        with patch("assistant.ollama_plan", return_value=None), patch("assistant.run_tool") as tool:
+            with self.assertRaises(UnsupportedQuestion):
+                query_inventory("Tell me a joke", "ollama")
+            tool.assert_not_called()
+        with patch("assistant.ollama_plan") as model:
+            with self.assertRaises(UnsupportedQuestion):
+                query_inventory("Update stock for PER-503", "ollama")
+            model.assert_not_called()
 
     def test_lookup_handles_punctuation_as_data(self):
         self.assertEqual(run_tool(Plan("lookup", product="USB'")), [])

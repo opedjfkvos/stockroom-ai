@@ -9,10 +9,19 @@ from urllib.request import Request, urlopen
 from inventory import CATEGORIES, ITEMS, TOOLS, Plan, answer_from_rows, run_tool
 
 DEFAULT_MODEL = "qwen2.5:1.5b"
+OUT_OF_SCOPE = (
+    "I can check current stock, reorder needs, out-of-stock products, highest stock, "
+    "or inventory value. Try asking about one of these."
+)
+UNSUPPORTED_REQUEST = re.compile(
+    r"\b(forecast|predict|weather|translate|sales|revenue|historical|yesterday|tomorrow|"
+    r"last (?:week|month|year)|next (?:week|month|year)|delete|update|remove|set|change)\b"
+    r"|\b(?:add|order|buy|purchase|reorder)\s+\d+\b"
+)
 PLAN_SCHEMA = {
     "type": "object",
     "properties": {
-        "tool": {"type": "string", "enum": list(TOOLS)},
+        "tool": {"type": "string", "enum": [*TOOLS, "unsupported"]},
         "category": {"type": "string", "enum": ["", *CATEGORIES]},
         "product": {"type": "string", "maxLength": 100},
     },
@@ -30,6 +39,8 @@ PROMPT = (
     "Tools: lookup for item or category stock, reorder for stock below minimum, "
     "out_of_stock for zero units, compare for highest stock, valuation for total value. Use an empty string for "
     "unspecified filters. Product is a product name keyword or SKU, only if asked. "
+    "Use unsupported with empty filters for unrelated questions, write requests, historical "
+    "or future data, or any calculation the listed tools cannot answer. "
     "Respond with the plan only, never with prose, SQL, or invented quantities."
 )
 
@@ -38,16 +49,20 @@ class ModelUnavailable(Exception):
     """The local model could not respond with a usable plan."""
 
 
+class UnsupportedQuestion(ValueError):
+    """The question falls outside the supported inventory queries."""
+
+
 def demo_plan(question):
     """Deterministic keyword routing so reviewers can try the app without a model."""
     normalized = question.casefold()
     if "out of stock" in normalized:
         tool = "out_of_stock"
-    elif re.search(r"reorder|replenish|low stock|below", normalized):
+    elif re.search(r"\b(reorder(?:ing)?|replenish(?:ment)?|low stock|below (?:the )?(?:minimum|reorder point))\b", normalized):
         tool = "reorder"
-    elif re.search(r"value|worth|valuation", normalized):
+    elif re.search(r"\b(inventory value|stock value|inventory valuation|stock worth|value of (?:the )?(?:inventory|stock))\b", normalized):
         tool = "valuation"
-    elif re.search(r"most stock|highest|compare|rank", normalized):
+    elif re.search(r"\b(most stock|highest stock|compare stock|rank by stock)\b", normalized):
         tool = "compare"
     else:
         tool = "lookup"
@@ -62,9 +77,17 @@ def demo_plan(question):
         if len(matches) > 1:
             return Plan(tool, category, alias)
     product = matches[0][0] if len(matches) == 1 else ""
-    if not product and not category and tool == "lookup":
-        if not re.search(r"(show|list|what|how).*\b(inventory|products|items|stock)\b", normalized):
-            raise ValueError("Demo mode recognises the sample products and categories. Try one of the suggested questions.")
+    if tool == "lookup":
+        lookup_intent = re.search(
+            r"^(?:show|list|what about|do we have|how many|stock (?:for|of|in))\b",
+            normalized,
+        ) or re.search(r"\b(?:units|in stock|inventory)\b", normalized)
+        catalogue_request = re.fullmatch(
+            r"(?:show|list) (?:me )?(?:the |all )?(?:current )?(?:inventory|products|items|stock)[?.]?",
+            normalized,
+        )
+        if not (catalogue_request or lookup_intent and (product or category)):
+            raise UnsupportedQuestion(OUT_OF_SCOPE)
     return Plan(tool, category, product)
 
 
@@ -92,6 +115,8 @@ def ollama_plan(question, model, endpoint="http://127.0.0.1:11434"):
         plan = json.loads(json.loads(reply)["message"]["content"])
         if not isinstance(plan, dict) or set(plan) != set(PLAN_SCHEMA["required"]):
             raise ValueError("Invalid plan shape.")
+        if plan == {"tool": "unsupported", "category": "", "product": ""}:
+            return None
         return Plan(**plan)
     except (URLError, TimeoutError, ValueError, TypeError, KeyError) as exc:
         raise ModelUnavailable(
@@ -99,14 +124,23 @@ def ollama_plan(question, model, endpoint="http://127.0.0.1:11434"):
         ) from exc
 
 
-def query_inventory(question, mode="demo"):
+def plan_question(question, mode, model):
     if not isinstance(question, str) or not question.strip() or len(question) > 280:
         raise ValueError("Enter a question of 1 to 280 characters.")
     if mode not in ("demo", "ollama"):
         raise ValueError("Unknown assistant mode.")
     question = question.strip()
-    model = os.environ.get("STOCKROOM_MODEL", DEFAULT_MODEL)
+    if UNSUPPORTED_REQUEST.search(question.casefold()):
+        raise UnsupportedQuestion(OUT_OF_SCOPE)
     plan = demo_plan(question) if mode == "demo" else ollama_plan(question, model)
+    if plan is None:
+        raise UnsupportedQuestion(OUT_OF_SCOPE)
+    return plan
+
+
+def query_inventory(question, mode="demo"):
+    model = os.environ.get("STOCKROOM_MODEL", DEFAULT_MODEL)
+    plan = plan_question(question, mode, model)
     rows = run_tool(plan)
     return {
         "answer": answer_from_rows(plan, rows),
