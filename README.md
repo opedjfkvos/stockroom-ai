@@ -5,6 +5,8 @@
 Stockroom AI is an AI-assisted portfolio prototype for answering questions about a sample inventory. It includes a browser dashboard, a Python API and a SQLite database. The dashboard opens in Demo mode with no model downloads, API keys, or third-party Python packages.
 
 
+![Stockroom AI dashboard with the reorder result and supporting inventory records](docs/dashboard.png)
+
 ## Run locally
 
 Use Python 3.10 or newer.
