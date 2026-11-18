@@ -7,6 +7,18 @@ Stockroom AI is an AI-assisted portfolio prototype for answering questions about
 
 ![Stockroom AI dashboard with the reorder result and supporting inventory records](docs/dashboard.png)
 
+## Windows app
+
+Open the latest green [Windows app workflow](https://github.com/opedjfkvos/stockroom-ai/actions/workflows/windows.yml)
+and download **StockroomAI-Windows** from its Artifacts section. Extract the ZIP and double-click
+`StockroomAI.exe`. The launcher opens the dashboard in your default browser and runs the local
+server without a console. Keep the launcher open while using the dashboard. Python is included.
+The app stores its SQLite files in `%LOCALAPPDATA%/StockroomAI`.
+
+Use **Import Excel or CSV from 1C** to choose a file. Stock search works immediately. The
+**Start local AI** button starts an existing Ollama installation if needed. Install and download
+the chosen model separately before using **Local LLM**. The build is unsigned.
+
 ## Run locally
 
 Use Python 3.10 or newer.
@@ -51,7 +63,7 @@ Start Ollama and install the example model.
 
     ollama pull qwen2.5:1.5b
 
-With Ollama running at its default local address, choose **Local LLM** in the web UI and ask a question. Set the `STOCKROOM_MODEL` environment variable before starting the app to use a different installed Ollama model. Smaller models can misinterpret questions, so use the Evidence panel to check tool selection and filters.
+With Ollama running at its default local address, choose **Local LLM** in the web UI and ask a question. Set the `STOCKROOM_MODEL` environment variable before starting the app to use a different installed Ollama model. The app verifies the operation and scope against the question. If it cannot verify a model suggestion, it asks you to rephrase. Use Evidence to inspect the selected tool, filters and rows.
 
 ## Evaluate question routing
 
@@ -78,7 +90,7 @@ python model_eval.py --model qwen2.5:1.5b --holdout --app
 | Qwen 1.5B, live catalogue revision, raw | 4/12 | 5/7 | 4/7 | 1/5 | 0/7 |
 | Qwen 1.5B, live catalogue revision with app checks | 11/12 | 6/7 | 7/7 | 5/5 | 0/7 |
 
-Tool and filter accuracy use all supported questions as their denominator. A refusal scores zero on both. Filters are scored independently of the tool, and product keywords are equivalent if they match the same sample SKUs. The raw run sends prompts directly to Ollama. The `--app` run uses the same planner and scope checks as the HTTP API. This diagnostic was reviewed before tuning the prompt and the app checks. Its results are useful for regression checks; new store questions are needed to estimate generalization. See [model_eval.py](model_eval.py) for the questions and scoring rules.
+Tool and filter accuracy use all supported questions as their denominator. A refusal scores zero on both. Filters are scored independently of the tool, and product keywords are equivalent if they match the same sample SKUs. The raw run sends prompts directly to Ollama. The `--app` run uses the same planner and scope checks as the HTTP API. This diagnostic was reviewed before tuning the prompt and the app checks. The model scores in the table are historical snapshots from before the stricter routing checks. Their results are useful for regression checks; new store questions are needed to estimate generalization. See [model_eval.py](model_eval.py) for the questions and scoring rules.
 
 In the [Ollama run on 18 November 2026](https://github.com/opedjfkvos/stockroom-ai/actions/runs/44352150255), Qwen (model ID `65ec06548149`) produced valid plans but often guessed the scope or selected a tool for an unsupported request. Examples:
 
@@ -96,7 +108,7 @@ The [live-catalogue run](https://github.com/opedjfkvos/stockroom-ai/actions/runs
 
 1. A question enters `POST /api/ask`.
 2. Demo mode selects a tool using deterministic rules. Local LLM mode asks Ollama for a JSON object that identifies a tool and optional filters.
-3. Python validates the plan and resolves the actual category and product from the question. For an ambiguous scope, the assistant can request clarification. Unsupported requests return a help message before an inventory tool runs.
+3. Python verifies the requested operation and resolves the category and product from the active catalogue. For an ambiguous scope, the assistant can request clarification. Unsupported requests return a help message before an inventory tool runs.
 4. SQLite runs the selected query with bound parameters. The connection is read-only after the initial seed.
 5. Python calculates or summarizes the result using the returned records. The model does not generate SQL or inventory quantities.
 
@@ -104,12 +116,13 @@ The API exposes `GET /api/inventory` for the catalogue and dashboard metrics. It
 
 ## SQLite schema
 
-On first use the app creates the [base schema](sql/schema.sql), seeds a local SQLite file at `data/stockroom.sqlite3`, and applies [migration 2](sql/002_stock_status.sql). Existing v1 databases keep their original products and movements. A missing database file during operation produces an error so the dashboard cannot silently switch to sample data. Set `STOCKROOM_DB` to select a different file. The schema separates categories, products and signed stock movements. The `inventory_status` view joins the catalogue with aggregated movements, so a product with no movements has zero on-hand stock. Foreign keys are enforced during initialization, and indexes support category and movement lookups. App queries open the database read-only.
+On first use the app creates the [base schema](sql/schema.sql), seeds a local SQLite file at `data/stockroom.sqlite3`, and applies [migration 2](sql/002_stock_status.sql). Existing v1 databases keep their original products and movements. A missing database file during operation produces an error so the dashboard cannot silently switch to sample data. Set `STOCKROOM_DB` to open an existing Stockroom SQLite database. A missing or unrecognized custom file returns an error. The schema separates categories, products and signed stock movements. The `inventory_status` view joins the catalogue with aggregated movements, so a product with no movements has zero on-hand stock. Foreign keys are enforced during initialization, and indexes support category and movement lookups. App queries open the database read-only.
 
-[Example SQL reports](sql/reports.sql) summarize stock value and replenishment costs by category. The app calculates dashboard totals in SQLite.
+[Example SQL reports](sql/reports.sql) summarize stock value and replenishment costs by category. The app calculates dashboard totals in SQLite. Negative balances are flagged on the dashboard and valued at zero. Reorder quantities describe the gap to minimum stock.
 
 ## Verify
 
+    python -m pip install -r requirements.txt
     python -m unittest discover -s tests -v
 
 Tests cover Demo routing, stock and price calculations, the real `POST /api/ask` endpoint, and persistence and read-only access in SQLite. The SQL reports are reconciled with the dashboard and reorder query. The movement test records a delivery and dispatch and checks the resulting balances and statuses. Separate tests exercise the Ollama client against a stub server. Live-model quality is measured by the standalone evaluation when Ollama is available.

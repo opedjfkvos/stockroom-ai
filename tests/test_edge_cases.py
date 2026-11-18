@@ -14,7 +14,7 @@ from urllib.request import Request, urlopen
 
 from app import Handler
 from assistant import ModelUnavailable, UnsupportedQuestion, ollama_plan, query_inventory
-from inventory import Plan, run_tool, snapshot
+from inventory import initialize, Plan, run_tool, snapshot
 
 
 @contextmanager
@@ -55,6 +55,7 @@ class TempDatabaseCase(unittest.TestCase):
         directory = TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         self.db_path = Path(directory.name) / "inventory.sqlite3"
+        initialize(self.db_path)
         environment = patch.dict("os.environ", {"STOCKROOM_DB": str(self.db_path)})
         environment.start()
         self.addCleanup(environment.stop)
@@ -265,6 +266,51 @@ class DemoRoutingEdgeCasesTest(TempDatabaseCase):
                             with self.assertRaises(UnsupportedQuestion):
                                 query_inventory(question, mode)
                             run.assert_not_called()
+
+    def test_reviewed_phrasings_and_model_disagreement(self):
+        for mode in ("demo", "ollama"):
+            with self.subTest(mode=mode), patch("assistant.ollama_plan", return_value=Plan("compare")):
+                for question in (
+                    "Do we have any laptops?",
+                    "Which products are not out of stock?",
+                    "What doesn't need reordering?",
+                    "What was our inventory value at the start of the month?",
+                    "How many webcams are in stock as of Monday?",
+                    "What is our current inventory value in euros?",
+                    "What is our inventory value if prices go up 10%?",
+                    "Is the webcam in Audio out of stock?",
+                ):
+                    with self.subTest(question=question), self.assertRaises(UnsupportedQuestion):
+                        query_inventory(question, mode)
+                for question, skus, tool in (
+                    ("How many keyboards are in storage?", ["PER-501"], "lookup"),
+                    ("Give me an update on webcam stock", ["PER-503"], "lookup"),
+                    ("Which USB products need reordering?", ["AUD-201", "ACC-101"], "reorder"),
+                    ("What is the value of SKU STO-601.", ["STO-601"], "valuation"),
+                ):
+                    with self.subTest(question=question):
+                        result = query_inventory(question, mode)
+                        self.assertEqual(result["plan"]["tool"], tool)
+                        self.assertEqual({row["sku"] for row in result["rows"]}, set(skus))
+                result = query_inventory("How many units are on hand across the whole warehouse?", mode)
+                self.assertIn("178 units", result["answer"])
+
+    def test_missing_custom_database_never_seeds_demo(self):
+        missing = self.db_path.with_name("typo.sqlite3")
+        with patch.dict("os.environ", {"STOCKROOM_DB": str(missing)}):
+            for _ in range(2):
+                initialize.cache_clear()
+                with self.assertRaises(sqlite3.Error):
+                    snapshot()
+            self.assertFalse(missing.exists())
+
+    def test_negative_balance_does_not_reduce_inventory_valuation(self):
+        initial = snapshot()["metrics"]["value_cents"]
+        self.adjust("PER-502", -5)
+        self.assertEqual(snapshot()["metrics"]["value_cents"], initial - 3 * 2490)
+        answer = query_inventory("What is the stock value of PER-502?")["answer"]
+        self.assertIn("$0.00", answer)
+        self.assertIn("Negative balances", answer)
 
     def test_new_products_and_categories_are_available_in_both_modes(self):
         self.write("INSERT INTO categories (name) VALUES (?)", ("Store Supplies",))

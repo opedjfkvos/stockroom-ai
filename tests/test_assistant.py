@@ -3,13 +3,14 @@
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Thread
 import unittest
 from unittest.mock import patch
 
 from assistant import ModelUnavailable, UnsupportedQuestion, ollama_plan, plan_question, query_inventory
-from inventory import Plan, run_tool, snapshot
+from inventory import initialize, Plan, run_tool, snapshot
 
 
 @contextmanager
@@ -43,7 +44,9 @@ class AssistantTest(unittest.TestCase):
     def setUp(self):
         directory = TemporaryDirectory()
         self.addCleanup(directory.cleanup)
-        environment = patch.dict("os.environ", {"STOCKROOM_DB": directory.name + "/inventory.sqlite3"})
+        path = Path(directory.name) / "inventory.sqlite3"
+        initialize(path)
+        environment = patch.dict("os.environ", {"STOCKROOM_DB": str(path)})
         environment.start()
         self.addCleanup(environment.stop)
 

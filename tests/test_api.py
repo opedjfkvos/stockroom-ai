@@ -14,7 +14,7 @@ from urllib.request import Request, urlopen
 
 from app import Handler
 from assistant import query_inventory
-from inventory import connect, snapshot
+from inventory import initialize, connect, snapshot
 
 
 class ApiTest(unittest.TestCase):
@@ -22,6 +22,7 @@ class ApiTest(unittest.TestCase):
         directory = TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         self.db_path = Path(directory.name) / "inventory.sqlite3"
+        initialize(self.db_path)
         environment = patch.dict("os.environ", {"STOCKROOM_DB": str(self.db_path)})
         environment.start()
         self.addCleanup(environment.stop)

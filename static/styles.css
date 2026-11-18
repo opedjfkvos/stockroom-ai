@@ -49,3 +49,7 @@ thead{background:#f2f6f3;color:#39534b}.product{font-weight:650}.sku{display:blo
 .import-panel a { align-self: center; }
 .import-panel [hidden] { display: none; }
 .import-panel .table-wrap { margin: 12px 0; }
+
+.notice { margin-bottom: 14px; }
+.sku-link { padding: 0; border: 0; background: transparent; text-decoration: underline; }
+@media(max-width:600px){.topbar{height:auto;min-height:67px;gap:14px;flex-wrap:wrap;padding-block:10px}}

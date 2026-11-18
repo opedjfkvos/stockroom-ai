@@ -2,7 +2,7 @@
 SELECT c.name AS category,
        COUNT(i.sku) AS products,
        COALESCE(SUM(i.stock), 0) AS units_on_hand,
-       COALESCE(SUM(i.stock * i.unit_cents), 0) AS inventory_value_cents
+       COALESCE(SUM(MAX(i.stock, 0) * i.unit_cents), 0) AS inventory_value_cents
 FROM categories AS c
 LEFT JOIN inventory_status AS i ON i.category = c.name
 GROUP BY c.id, c.name

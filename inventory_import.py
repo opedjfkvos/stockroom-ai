@@ -174,6 +174,20 @@ def state(db=None):
     return tuple(previous) if previous else (0, None)
 
 
+def latest_import():
+    path = inventory_path()
+    if not path.is_file():
+        return None, None
+    with closing(sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True)) as db:
+        revision, currency = state(db)
+        if not revision:
+            return None, None
+        applied_at = db.execute(
+            "SELECT applied_at FROM inventory_imports WHERE id = ?", (revision,)
+        ).fetchone()[0]
+        return currency, applied_at.replace(" ", "T") + "Z"
+
+
 def token_for(filename, data, currency, revision):
     digest = hashlib.sha256(data).hexdigest()
     detail = f"{revision}:{currency}:{Path(filename).suffix.lower()}:{digest}".encode()
